@@ -91,7 +91,7 @@ Copy the `windows` folder to a USB stick or a share every endpoint can reach. Th
 |---|---|
 | `IdServer` | Your hbbs hostname (port 21116 is assumed) |
 | `RelayServer` | Your hbbr hostname — usually the same |
-| `Key` | Contents of `id_ed25519.pub` |
+| `Key` | Contents of `id_ed25519.pub` — exactly 44 characters ending in `=`. Copy it from the TrueNAS check output, or run `cat id_ed25519.pub; echo` so the shell prompt doesn't land on the same line and get copied too |
 | `AllowedIPs` | Optional. Comma-separated IPs/CIDRs allowed to connect, e.g. your home WAN IPs. **Leave empty until you're sure your WAN IPs are stable** — a wrong value locks you out |
 | `ConfigString` | Optional. The string from RustDesk → Settings → Network → *Export server config*. Only needed if the per-setting method warns on your RustDesk version |
 

@@ -50,8 +50,8 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$SettingsPath = (Join-Path $PSScriptRoot 'deploy-settings.json'),
-    [string]$InventoryPath = (Join-Path $PSScriptRoot 'endpoints.csv'),
+    [string]$SettingsPath = '',
+    [string]$InventoryPath = '',
     [string]$Notes = '',
     [switch]$Force,
     [switch]$SkipInstall
@@ -60,6 +60,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'   # makes Invoke-WebRequest much faster on PS 5.1
+
+# $PSScriptRoot can be empty inside param() defaults on Windows PowerShell 5.1,
+# so work out the script's folder here instead.
+$ScriptDir = $PSScriptRoot
+if (-not $ScriptDir) { $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition }
+if (-not $ScriptDir) { $ScriptDir = (Get-Location).Path }
+if (-not $SettingsPath)  { $SettingsPath  = Join-Path $ScriptDir 'deploy-settings.json' }
+if (-not $InventoryPath) { $InventoryPath = Join-Path $ScriptDir 'endpoints.csv' }
 
 # ---------------------------------------------------------------------------
 # 0. Elevate if needed
@@ -170,6 +178,15 @@ if (-not $settings.IdServer)    { $settings.IdServer = (Read-Host '    RustDesk 
 if (-not $settings.RelayServer) { $settings.RelayServer = $settings.IdServer }
 if (-not $settings.Key)         { $settings.Key = (Read-Host '    Server public key (contents of id_ed25519.pub)').Trim() }
 
+$settings.IdServer    = $settings.IdServer.Trim().TrimEnd('.')
+$settings.RelayServer = $settings.RelayServer.Trim().TrimEnd('.')
+$settings.Key         = $settings.Key.Trim()
+# Common copy/paste slip: `cat id_ed25519.pub` has no trailing newline, so the
+# shell prompt (e.g. "user@truenas:~$") gets copied right after the key.
+if ($settings.Key -notmatch '^[A-Za-z0-9+/]{43}=$' -and $settings.Key -match '^([A-Za-z0-9+/]{43}=)') {
+    Write-Warn2 "Key had extra text after it (probably the shell prompt) - using only the first 44 characters. Fix deploy-settings.json."
+    $settings.Key = $Matches[1]
+}
 if ($settings.IdServer -notmatch '^[A-Za-z0-9.\-]+(:\d+)?$') { Stop-WithError "ID server '$($settings.IdServer)' doesn't look like a hostname." }
 if ($settings.Key -notmatch '^[A-Za-z0-9+/]{43}=$')           { Stop-WithError 'Server key should be 44 characters ending in "=". Copy it again from id_ed25519.pub.' }
 $serverHost = ($settings.IdServer -split ':')[0]
