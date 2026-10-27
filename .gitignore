@@ -1,0 +1,7 @@
+# Never commit secrets or site-specific data (this repository is public)
+deploy-settings.json
+endpoints.csv
+*.log
+.env
+*.key
+id_ed25519*

@@ -1,0 +1,7 @@
+{
+  "IdServer": "rustdesk.example.com",
+  "RelayServer": "rustdesk.example.com",
+  "Key": "PASTE-THE-44-CHARACTER-KEY-FROM-id_ed25519.pub=",
+  "AllowedIPs": "",
+  "ConfigString": ""
+}
