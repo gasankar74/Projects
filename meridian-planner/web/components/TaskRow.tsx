@@ -7,6 +7,7 @@ import { fmtDeadline, fmtDuration } from "@/lib/dates";
 import type { Task } from "@/lib/types";
 import { PRIORITY_LABEL } from "@/lib/types";
 import { useApp } from "./Shell";
+import { PlayButton } from "./Timer";
 
 export const PRIORITY_STYLE: Record<string, string> = {
   urgent: "bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-300",
@@ -16,7 +17,7 @@ export const PRIORITY_STYLE: Record<string, string> = {
 };
 
 export function TaskRow({ task, compact = false }: { task: Task; compact?: boolean }) {
-  const { categories, projects, openTask } = useApp();
+  const { categories, projects, openTask, runningTaskId } = useApp();
   const [done, setDone] = useState(task.status === "done");
   const cat = categories.find((c) => c.id === task.category_id);
   const proj = projects.find((p) => p.id === task.project_id);
@@ -52,6 +53,7 @@ export function TaskRow({ task, compact = false }: { task: Task; compact?: boole
       <div className="min-w-0 flex-1">
         <div className={`flex items-center gap-1.5 text-sm ${done ? "text-stone-400 line-through" : ""}`}>
           {task.confidential && <span title="Confidential">🔒</span>}
+          {task.is_milestone && <span title="Milestone" className="text-amber-600">◆</span>}
           <span className="truncate">{task.title}</span>
           {task.recurrence && <span title={`Repeats: ${describeRecurrence(task.recurrence)}`} className="text-stone-400">↻</span>}
         </div>
@@ -84,6 +86,7 @@ export function TaskRow({ task, compact = false }: { task: Task; compact?: boole
           {task.status === "inbox" && <span className="chip bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">Inbox</span>}
         </div>
       </div>
+      {!done && <PlayButton taskId={task.id} running={runningTaskId === task.id} />}
     </div>
   );
 }

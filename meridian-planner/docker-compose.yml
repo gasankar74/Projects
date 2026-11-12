@@ -15,6 +15,9 @@ services:
     env_file: ./backend/.env
     environment:
       MERIDIAN_DATABASE_URL: postgresql+psycopg://meridian:meridian@db:5432/meridian
+      # Ollama on the host (not in this stack). If it runs elsewhere, set MERIDIAN_OLLAMA_URL in the shell or a top-level .env.
+      MERIDIAN_OLLAMA_URL: ${MERIDIAN_OLLAMA_URL:-http://host.docker.internal:11434}
+    extra_hosts: ["host.docker.internal:host-gateway"]
     depends_on: [db]
     ports: ["8000:8000"]
   worker:

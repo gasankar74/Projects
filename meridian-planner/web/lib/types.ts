@@ -17,7 +17,10 @@ export interface Category {
   default_priority: Priority;
   open_count: number;
   scheduling_profile_id: string | null;
+  ai_access: AiAccess;
 }
+
+export type AiAccess = "default" | "hidden" | "allowed";
 
 export interface Recurrence {
   kind?: "fixed" | "after_completion";
@@ -77,8 +80,132 @@ export interface Project {
   color: string | null;
   client: string | null;
   notes: string | null;
+  area_id: string | null;
+  start_date: string | null;
+  position: number;
+  template_id: string | null;
+  ai_access: AiAccess;
   open_count: number;
   done_count: number;
+  open_min: number;
+  tracked_min: number;
+}
+
+export interface Area {
+  id: string;
+  name: string;
+  position: number;
+}
+
+export interface OutlineItem {
+  title: string;
+  duration_min: number;
+  priority?: Priority;
+  offset_days?: number | null;
+  depends_on: number[];
+  checklist?: string[];
+  is_milestone?: boolean;
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  description: string | null;
+  category_id: string | null;
+  items: OutlineItem[];
+}
+
+export interface Starter {
+  key: string;
+  name: string;
+  description: string;
+  items: OutlineItem[];
+}
+
+export interface TimeEntry {
+  id: string;
+  task_id: string;
+  title: string;
+  started_at: string;
+  ended_at: string | null;
+  minutes: number;
+  source: string;
+  note: string | null;
+  running: boolean;
+  remaining_min?: number;
+  duration_min?: number;
+  tracked_min?: number;
+}
+
+export interface Top3Item {
+  task_id: string;
+  title: string;
+  priority: Priority;
+  deadline: string | null;
+  status: Status;
+  done: boolean;
+  start: string | null;
+  at_risk: boolean;
+  why: string;
+}
+
+export interface Top3 {
+  day: string;
+  source: "you" | "suggested";
+  items: Top3Item[];
+}
+
+export interface AiChange {
+  op: string;
+  task_id?: string;
+  title?: string;
+  status?: string;
+  fields?: Record<string, unknown>;
+  start?: string | null;
+  end?: string | null;
+  deleted?: boolean;
+}
+
+export interface AiMessage {
+  id: string;
+  seq: number;
+  role: "user" | "assistant" | "tool" | "note";
+  content: string;
+  tools?: string[];
+  tool?: string;
+  changes: AiChange[];
+  action_id: string | null;
+  created_at: string;
+}
+
+export interface AiAction {
+  id: string;
+  summary: string;
+  status: "pending" | "confirmed" | "cancelled" | "failed";
+  preview: {
+    items: { op: string; task_id: string | null; title: string; fields: Record<string, unknown> }[];
+    moves: { task_id: string; title: string; from: string | null; to: string | null; day_changed: boolean }[];
+    new_warnings: string[];
+  };
+  result: { error?: string; changes?: AiChange[] } | null;
+  created_at: string;
+}
+
+export interface AiConversation {
+  id: string;
+  title: string;
+  provider: string;
+  model: string;
+  updated_at: string;
+}
+
+export interface AiStatus {
+  provider: string;
+  model: string;
+  local: boolean;
+  ok: boolean;
+  error: string | null;
+  ai_opt_in: boolean;
 }
 
 export interface ChecklistItem {
@@ -130,6 +257,8 @@ export interface Task {
   links: { title: string; url: string }[];
   confidential: boolean;
   ai_allowed: boolean;
+  board_position: number;
+  is_milestone: boolean;
   completed_at: string | null;
   created_at: string;
   updated_at: string;
@@ -208,6 +337,7 @@ export interface ScheduleSettings {
   holidays: string[];
   write_days: number;
   event_travel_min: number;
+  learn_durations: boolean;
 }
 
 export interface TaskEvent {

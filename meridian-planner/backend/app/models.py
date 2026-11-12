@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Index,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -216,6 +217,9 @@ class Category(TimestampMixin, Base):
     default_priority: Mapped[str] = mapped_column(String(16), default="medium")
     # Phase 3 links a scheduling profile here.
     scheduling_profile_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # What the AI assistant may read of this category's tasks: default (confidential tasks hidden) | hidden (every
+    # task hidden) | allowed (confidential tasks visible too).
+    ai_access: Mapped[str] = mapped_column(String(16), default="default", server_default="default")
 
 
 class Project(TimestampMixin, Base):
@@ -231,6 +235,10 @@ class Project(TimestampMixin, Base):
     color: Mapped[str | None] = mapped_column(String(16))
     client: Mapped[str | None] = mapped_column(String(200))
     notes: Mapped[str | None] = mapped_column(Text)
+    start_date: Mapped[date | None] = mapped_column(Date)
+    position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    template_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("project_templates.id", ondelete="SET NULL", name="fk_projects_template"))
+    ai_access: Mapped[str] = mapped_column(String(16), default="default", server_default="default")
 
 
 TASK_STATUSES = ("inbox", "todo", "in_progress", "blocked", "done", "cancelled")
@@ -291,6 +299,10 @@ class Task(TimestampMixin, Base):
     recurrence: Mapped[dict | None] = mapped_column(JSONB)
     series_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("recurring_series.id", ondelete="SET NULL"), index=True)
     occurrence_due: Mapped[date | None] = mapped_column(Date)
+
+    # Phase 4: order within a Kanban column, and milestones (zero-length markers on the Gantt chart).
+    board_position: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    is_milestone: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     tags: Mapped[list[str]] = mapped_column(ARRAY(String(64)), default=list)
     links: Mapped[list] = mapped_column(JSONB, default=list)  # [{"title":..., "url":...}]
@@ -442,3 +454,103 @@ class WatchChannel(Base):
     token_hash: Mapped[str] = mapped_column(String(64))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ProjectTemplate(TimestampMixin, Base):
+    """A reusable project outline. `items` is a list of task outlines:
+    {"title", "duration_min", "priority", "offset_days" (due date, days after the project start), "depends_on": [index],
+     "checklist": [str], "is_milestone"}."""
+
+    __tablename__ = "project_templates"
+    __table_args__ = (UniqueConstraint("user_id", "name"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text)
+    category_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("categories.id", ondelete="SET NULL"))
+    items: Mapped[list] = mapped_column(JSONB, default=list)
+
+
+class TimeEntry(Base):
+    """Tracked work on a task. A running timer has no ended_at; there is at most one per user."""
+
+    __tablename__ = "time_entries"
+    __table_args__ = (
+        Index("ix_time_entries_user_start", "user_id", "started_at"),
+        Index("uq_time_entries_running", "user_id", unique=True, postgresql_where=text("ended_at IS NULL")),
+    )
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    task_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source: Mapped[str] = mapped_column(String(16), default="timer")  # timer | manual | focus
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    @property
+    def minutes(self) -> int:
+        end = self.ended_at or utcnow()
+        return max(0, int((end - self.started_at).total_seconds() // 60))
+
+
+class DailyFocus(Base):
+    """The user's own Top 3 for a day, when they pick it instead of taking the suggested one."""
+
+    __tablename__ = "daily_focus"
+    __table_args__ = (UniqueConstraint("user_id", "day"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    day: Mapped[date] = mapped_column(Date)
+    task_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class AiConversation(TimestampMixin, Base):
+    __tablename__ = "ai_conversations"
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(200), default="New conversation")
+    # Short task references shown to the model ("T1" -> task uuid), stable for the whole conversation.
+    refs: Mapped[dict] = mapped_column(JSONB, default=dict)
+    provider: Mapped[str] = mapped_column(String(32), default="")
+    model: Mapped[str] = mapped_column(String(100), default="")
+
+    messages: Mapped[list["AiMessage"]] = relationship(cascade="all, delete-orphan", order_by="AiMessage.seq")
+
+
+class AiMessage(Base):
+    """One transcript entry. role: user | assistant | tool. `changes` lists the records a tool call saved, read back
+    from the database, so the app (not the model) states what was actually changed."""
+
+    __tablename__ = "ai_messages"
+    __table_args__ = (Index("ix_ai_messages_conv_seq", "conversation_id", "seq"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    conversation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ai_conversations.id", ondelete="CASCADE"))
+    seq: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str] = mapped_column(String(16))
+    content: Mapped[str] = mapped_column(Text, default="")
+    tool_calls: Mapped[list | None] = mapped_column(JSONB)  # assistant: [{"id","name","arguments"}]
+    tool_call_id: Mapped[str | None] = mapped_column(String(100))
+    tool_name: Mapped[str | None] = mapped_column(String(64))
+    changes: Mapped[list | None] = mapped_column(JSONB)
+    action_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AiAction(Base):
+    """A change the assistant proposed that needs the user's confirmation (bulk, delete, or moving work to another
+    day). Nothing is written until the user confirms."""
+
+    __tablename__ = "ai_actions"
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("ai_conversations.id", ondelete="CASCADE"), index=True)
+    tool: Mapped[str] = mapped_column(String(64))
+    args: Mapped[dict] = mapped_column(JSONB, default=dict)  # resolved: real task ids
+    summary: Mapped[str] = mapped_column(Text, default="")
+    preview: Mapped[dict] = mapped_column(JSONB, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | confirmed | cancelled | failed
+    result: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

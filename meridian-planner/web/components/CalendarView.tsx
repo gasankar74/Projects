@@ -169,11 +169,14 @@ export function CalendarView() {
   const [mode, setMode] = useState<CalMode>("week");
   const [anchor, setAnchor] = useState(() => new Date());
   const [now, setNow] = useState(() => new Date());
+  const [mounted, setMounted] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const narrow = window.matchMedia("(max-width: 640px)").matches;
     if (narrow) setMode("day");
+    setMounted(true);
+    setNow(new Date());
     const t = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(t);
   }, []);
@@ -376,7 +379,7 @@ export function CalendarView() {
                     </a>
                   );
                 })}
-                {sameDay(d, now) && (
+                {mounted && sameDay(d, now) && (
                   <div className="pointer-events-none absolute inset-x-0 z-20 border-t-2 border-red-500" style={{ top: ((now.getTime() - startOfDay(now).getTime()) / 3600000) * HOUR_PX }}>
                     <div className="-mt-[5px] -ml-[5px] h-2 w-2 rounded-full bg-red-500" />
                   </div>

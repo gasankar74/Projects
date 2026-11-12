@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 Priority = Literal["urgent", "high", "medium", "low"]
 Status = Literal["inbox", "todo", "in_progress", "blocked", "done", "cancelled"]
+AiAccess = Literal["default", "hidden", "allowed"]
 
 
 class ORM(BaseModel):
@@ -45,6 +46,7 @@ class CategoryIn(BaseModel):
     position: int = 0
     default_priority: Priority = "medium"
     scheduling_profile_id: uuid.UUID | None = None
+    ai_access: AiAccess = "default"
 
 
 class CategoryPatch(BaseModel):
@@ -53,6 +55,7 @@ class CategoryPatch(BaseModel):
     position: int | None = None
     default_priority: Priority | None = None
     scheduling_profile_id: uuid.UUID | None = None
+    ai_access: AiAccess | None = None
 
 
 class CategoryOut(ORM):
@@ -62,6 +65,7 @@ class CategoryOut(ORM):
     position: int
     default_priority: str
     scheduling_profile_id: uuid.UUID | None = None
+    ai_access: str = "default"
     open_count: int = 0
 
 
@@ -74,10 +78,14 @@ class ProjectIn(BaseModel):
     color: str | None = None
     client: str | None = None
     notes: str | None = None
+    area_id: uuid.UUID | None = None
+    start_date: date | None = None
+    position: int = 0
+    ai_access: AiAccess = "default"
 
 
 class ProjectPatch(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
     category_id: uuid.UUID | None = None
     status: Literal["active", "on_hold", "done", "archived"] | None = None
     priority: Priority | None = None
@@ -85,6 +93,10 @@ class ProjectPatch(BaseModel):
     color: str | None = None
     client: str | None = None
     notes: str | None = None
+    area_id: uuid.UUID | None = None
+    start_date: date | None = None
+    position: int | None = None
+    ai_access: AiAccess | None = None
 
 
 class ProjectOut(ORM):
@@ -97,8 +109,15 @@ class ProjectOut(ORM):
     color: str | None
     client: str | None
     notes: str | None
+    area_id: uuid.UUID | None = None
+    start_date: date | None = None
+    position: int = 0
+    template_id: uuid.UUID | None = None
+    ai_access: str = "default"
     open_count: int = 0
     done_count: int = 0
+    open_min: int = 0
+    tracked_min: int = 0
 
 
 class Window(BaseModel):
@@ -160,6 +179,8 @@ class TaskFields(BaseModel):
     links: list[Link] | None = None
     confidential: bool | None = None
     ai_allowed: bool | None = None
+    board_position: int | None = None
+    is_milestone: bool | None = None
 
     @field_validator("tags")
     @classmethod
@@ -223,6 +244,8 @@ class TaskOut(ORM):
     links: list
     confidential: bool
     ai_allowed: bool
+    board_position: int = 0
+    is_milestone: bool = False
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime

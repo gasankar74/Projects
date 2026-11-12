@@ -13,6 +13,7 @@ from ..models import Calendar, CalendarEvent, Category, ScheduledBlock, Schedule
 from ..scheduler.engine import DAY_NAMES, TaskInput
 from ..security import current_user
 from ..services import scheduling as sched
+from ..services import tracking
 from ..services.tasks import DONE_STATES, get_task
 
 router = APIRouter(prefix="/schedule", tags=["schedule"])
@@ -113,6 +114,7 @@ class SettingsPatch(BaseModel):
     holidays: list[date] | None = None
     write_days: int | None = Field(default=None, ge=1, le=60)
     event_travel_min: int | None = Field(default=None, ge=0, le=240)
+    learn_durations: bool | None = None
 
     @field_validator("work_hours")
     @classmethod
@@ -321,14 +323,7 @@ def agenda(day: date | None = None, user: User = Depends(current_user), db: Sess
     items = [{"kind": "task", "start": b.start, "end": b.end, "title": b.title, "task_id": str(b.task_id), "block_id": str(b.id), "priority": b.priority, "color": b.color, "locked": b.locked} for b in blocks]
     items += [{"kind": "event", "start": e.start_at, "end": e.end_at, "title": e.summary or "(busy)", "all_day": e.all_day, "busy": e.is_busy, "event_id": str(e.id)} for e in events]
     items.sort(key=lambda x: (x["start"], x["kind"]))
-    stats = run.task_stats if run else {}
-    seen, top = set(), []
-    for b in sorted(blocks, key=lambda b: -(stats.get(str(b.task_id), {}).get("score") or 0)):
-        if b.task_id not in seen:
-            seen.add(b.task_id)
-            top.append({"task_id": str(b.task_id), "title": b.title, "start": b.start, "score": stats.get(str(b.task_id), {}).get("score")})
-        if len(top) == 3:
-            break
+    top = tracking.top3(db, user, day)["items"]
     planned = sum(int((b.end - b.start).total_seconds() // 60) for b in blocks)
     return {"date": day.isoformat(), "items": items, "top3": top, "planned_min": planned}
 

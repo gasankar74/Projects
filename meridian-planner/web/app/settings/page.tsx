@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Shell, useApp } from "@/components/Shell";
 import { api, bus, useApi } from "@/lib/api";
-import type { Calendar, GoogleAccount, Profile as SchedProfile, ScheduleSettings, WriteStatus } from "@/lib/types";
+import type { AiStatus, Calendar, GoogleAccount, Profile as SchedProfile, ScheduleSettings, WriteStatus } from "@/lib/types";
 import { PRIORITIES, PRIORITY_LABEL } from "@/lib/types";
 
 const ROLE_LABEL: Record<string, string> = { owner: "Owner", writer: "Can edit", reader: "Read-only", freeBusyReader: "Free/busy only" };
@@ -286,6 +286,17 @@ function Categories() {
                   {p.name}
                 </option>
               ))}
+            </select>
+            <select
+              className="input w-36"
+              aria-label={`${c.name} AI access`}
+              title="What the AI assistant may read about tasks in this category"
+              value={c.ai_access}
+              onChange={(e) => save(c.id, { ai_access: e.target.value })}
+            >
+              <option value="default">AI: usual</option>
+              <option value="hidden">AI: hide all</option>
+              <option value="allowed">AI: may read all</option>
             </select>
             <select className="input w-32" value={c.default_priority} onChange={(e) => save(c.id, { default_priority: e.target.value })}>
               {PRIORITIES.map((p) => (
@@ -652,6 +663,46 @@ function Profiles() {
   );
 }
 
+function Assistant() {
+  const { me } = useApp();
+  const { data: st } = useApi<AiStatus>("/assistant/status");
+  const [optIn, setOptIn] = useState(false);
+  useEffect(() => setOptIn(!!me?.ai_opt_in), [me]);
+  return (
+    <Card title="AI assistant">
+      {st && (
+        <div className="mb-3 flex items-center gap-2 text-sm">
+          <span className={`h-2 w-2 rounded-full ${st.ok ? "bg-emerald-500" : "bg-red-500"}`} />
+          {st.provider === "none" ? "Switched off on this server" : `${st.model} (${st.provider}${st.local ? ", on your own server" : ", external provider"})`}
+          {st.error && <span className="text-xs text-red-600">{st.error}</span>}
+        </div>
+      )}
+      <p className="mb-2 text-xs text-stone-500">
+        The assistant changes tasks through the same rules as the app, and the scheduler decides times. Deleting, changing more than five tasks, or moving work to another day always waits for your
+        Confirm. Confidential tasks reach it only as “Confidential task” with their timing.
+        {st && !st.local && " With an external provider, calendar event titles are hidden too unless you allow everything below."}
+      </p>
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-1"
+          checked={optIn}
+          onChange={async (e) => {
+            const v = e.target.checked;
+            if (v && !confirm("Let the assistant read the details of confidential tasks too (unless a category or project hides them)?")) return;
+            setOptIn(v);
+            await api("/auth/me", { method: "PATCH", json: { ai_opt_in: v } });
+          }}
+        />
+        <span>
+          Allow the assistant to read confidential tasks
+          <span className="block text-xs text-stone-500">Off by default. You can also allow single tasks in the task panel, or set a category or project to hide or allow everything.</span>
+        </span>
+      </label>
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   return (
     <Shell>
@@ -662,6 +713,7 @@ export default function SettingsPage() {
           <Scheduling />
           <Profiles />
           <Profile />
+          <Assistant />
           <Categories />
           <Data />
         </div>
