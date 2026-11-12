@@ -82,7 +82,7 @@ async def proxy(request: Request):
 app = Starlette(
     routes=[
         Route("/o/oauth2/v2/auth", authorize),
-        Route("/{path:path}", proxy, methods=["GET", "POST"]),
+        Route("/{path:path}", proxy, methods=["GET", "POST", "PATCH", "PUT", "DELETE"]),
     ]
 )
 

@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { api, bus, useApi } from "@/lib/api";
 import { DAY_NAMES, fmtDeadline, fmtDuration, fromLocalInput, toLocalInput } from "@/lib/dates";
-import type { Block, Calendar, PlanWarning, Task, TaskEvent } from "@/lib/types";
+import type { Block, Calendar, PlanWarning, Profile, Task, TaskEvent } from "@/lib/types";
 import { PRIORITIES, PRIORITY_LABEL, STATUS_LABEL } from "@/lib/types";
+import { RepeatEditor } from "./RepeatEditor";
 import { useApp } from "./Shell";
 
 type Form = Partial<Task> & { tagsText?: string; linksText?: string };
@@ -23,6 +24,8 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
   const { data: task, reload, setData } = useApi<Task>(`/tasks/${taskId}`);
   const { data: history, reload: reloadHistory } = useApi<TaskEvent[]>(`/tasks/${taskId}/history`);
   const { data: calendars } = useApi<Calendar[]>("/calendars");
+  const { data: profiles } = useApi<Profile[]>("/profiles");
+  const [recTouched, setRecTouched] = useState(false);
   const { data: others } = useApi<{ items: Task[] }>("/tasks?limit=500");
   const [form, setForm] = useState<Form>({});
   const [dirty, setDirty] = useState(false);
@@ -34,6 +37,7 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
     if (task) {
       setForm({ ...task, tagsText: task.tags.join(", "), linksText: task.links.map((l) => (l.title ? `${l.title} | ${l.url}` : l.url)).join("\n") });
       setDirty(false);
+      setRecTouched(false);
     }
   }, [task]);
   useEffect(() => {
@@ -101,6 +105,9 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
       buffer_after_min: Number(form.buffer_after_min ?? 0),
       energy: form.energy || null,
       calendar_id: form.calendar_id || null,
+      scheduling_profile_id: form.scheduling_profile_id || null,
+      location: form.location || null,
+      travel_min: Number(form.travel_min ?? 0),
       tags: (form.tagsText ?? "").split(",").map((t) => t.trim()).filter(Boolean),
       links,
       confidential: form.confidential,
@@ -110,6 +117,8 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
     const changed = Object.fromEntries(
       Object.entries(body).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify((task as unknown as Record<string, unknown>)[k] ?? null)),
     );
+    // The repeat rule is only sent when it was edited: re-sending it would regenerate future occurrences.
+    if (recTouched) changed.recurrence = form.recurrence ? JSON.parse(JSON.stringify(form.recurrence)) : null;
     if (Object.keys(changed).length === 0) return setDirty(false);
     if (await call(`/tasks/${task.id}`, { method: "PATCH", json: changed })) setDirty(false);
   }
@@ -302,6 +311,22 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
                     })}
                   </div>
                 </div>
+                <Field label="Hours (scheduling profile)">
+                  <select className="input" value={form.scheduling_profile_id ?? ""} onChange={(e) => set({ scheduling_profile_id: e.target.value || null })}>
+                    <option value="">Category's or default work hours</option>
+                    {(profiles ?? []).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Location">
+                  <input className="input" placeholder="e.g. 111 N Hill St" value={form.location ?? ""} onChange={(e) => set({ location: e.target.value })} />
+                </Field>
+                <Field label="Travel each way (min)">
+                  <input type="number" min={0} step={5} className="input" value={form.travel_min ?? 0} onChange={(e) => set({ travel_min: Number(e.target.value) })} />
+                </Field>
                 <Field label="Write blocks to calendar" className="col-span-2 sm:col-span-3">
                   <select className="input" value={form.calendar_id ?? ""} onChange={(e) => set({ calendar_id: e.target.value || null })}>
                     <option value="">Default task calendar</option>
@@ -313,9 +338,21 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
                   </select>
                 </Field>
               </div>
-              {task.recurrence && (
+            </section>
+
+            <section className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-400">Repeat</div>
+              <RepeatEditor
+                value={form.recurrence ?? null}
+                seriesId={task.series_id}
+                onChange={(v) => {
+                  set({ recurrence: v });
+                  setRecTouched(true);
+                }}
+              />
+              {task.occurrence_due && (
                 <div className="mt-2 text-xs text-stone-500">
-                  Repeats: {task.recurrence.text ?? task.recurrence.rrule} <span className="text-stone-400">(series generation arrives in Phase 3)</span>
+                  This occurrence is due {new Date(task.occurrence_due + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}.
                 </div>
               )}
             </section>

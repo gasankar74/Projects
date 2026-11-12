@@ -1,4 +1,4 @@
-"""Database models for Phase 1.
+"""Database models.
 
 All instants are stored as timestamptz in UTC. Time-of-day rules keep an IANA zone.
 Later phases add scheduling tables (schedule_runs, scheduled_blocks, ...) through migrations.
@@ -106,6 +106,8 @@ class Calendar(TimestampMixin, Base):
     sync_token: Mapped[str | None] = mapped_column(Text)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
+    # Set by a push notification from Google; the worker syncs the calendar a few seconds later.
+    sync_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     account: Mapped[GoogleAccount] = relationship(back_populates="calendars")
 
@@ -152,6 +154,39 @@ class CalendarEvent(TimestampMixin, Base):
         if self.self_response == "declined":
             return False
         return True
+
+
+class SchedulingProfile(TimestampMixin, Base):
+    """Named working hours (e.g. Legal 9-5 weekdays, Personal evenings and weekends) with an optional daily cap.
+    A task uses its own profile, else its category's, else the default work hours."""
+
+    __tablename__ = "scheduling_profiles"
+    __table_args__ = (UniqueConstraint("user_id", "name"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    color: Mapped[str | None] = mapped_column(String(16))
+    work_hours: Mapped[dict] = mapped_column(JSONB, default=dict)  # {"mon": [["09:00","12:00"],["13:00","17:00"]], ...}
+    daily_cap_min: Mapped[int | None] = mapped_column(Integer)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class RecurringSeries(TimestampMixin, Base):
+    """A repeating task. Each occurrence is an ordinary task row (series_id + occurrence_due), generated ahead of
+    time for fixed rules, or when the previous one is completed for completion-based rules."""
+
+    __tablename__ = "recurring_series"
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(500))
+    template: Mapped[dict] = mapped_column(JSONB, default=dict)  # task fields copied to every occurrence
+    rule: Mapped[dict] = mapped_column(JSONB, default=dict)  # see app/scheduler/recurrence.Rule
+    anchor: Mapped[date] = mapped_column(Date)  # first possible occurrence date
+    missed_policy: Mapped[str] = mapped_column(String(16), default="keep")  # keep | skip | latest_only
+    generate_ahead_days: Mapped[int] = mapped_column(Integer, default=14)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_generated_due: Mapped[date | None] = mapped_column(Date)
+    generated_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class Workspace(TimestampMixin, Base):
@@ -206,7 +241,11 @@ class Task(TimestampMixin, Base):
     """The master task table. Moving a task between categories or projects only changes a foreign key."""
 
     __tablename__ = "tasks"
-    __table_args__ = (Index("ix_tasks_user_status", "user_id", "status"),)
+    __table_args__ = (
+        Index("ix_tasks_user_status", "user_id", "status"),
+        # One task per series per due date: generation is idempotent even if two workers race.
+        UniqueConstraint("series_id", "occurrence_due", name="uq_tasks_series_occurrence"),
+    )
     id: Mapped[uuid.UUID] = uuid_pk()
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
     title: Mapped[str] = mapped_column(String(500))
@@ -244,9 +283,14 @@ class Task(TimestampMixin, Base):
     buffer_after_min: Mapped[int] = mapped_column(Integer, default=0)
     energy: Mapped[str | None] = mapped_column(String(16))  # high | medium | low
     calendar_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("calendars.id", ondelete="SET NULL"))
+    scheduling_profile_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("scheduling_profiles.id", ondelete="SET NULL"))
+    location: Mapped[str | None] = mapped_column(Text)
+    travel_min: Mapped[int] = mapped_column(Integer, default=0)  # each way
 
-    # Draft recurrence captured by quick add; the recurrence engine (Phase 3) turns it into a series.
+    # Repeat rule as entered. Saving a task with one creates (or updates) its RecurringSeries.
     recurrence: Mapped[dict | None] = mapped_column(JSONB)
+    series_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("recurring_series.id", ondelete="SET NULL"), index=True)
+    occurrence_due: Mapped[date | None] = mapped_column(Date)
 
     tags: Mapped[list[str]] = mapped_column(ARRAY(String(64)), default=list)
     links: Mapped[list] = mapped_column(JSONB, default=list)  # [{"title":..., "url":...}]
@@ -350,3 +394,51 @@ class ScheduledBlock(Base):
     reason: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     run: Mapped[ScheduleRun] = relationship(back_populates="blocks")
+
+
+class BlockEventLink(Base):
+    """A scheduled block as written to Google (and the outbox for writing it).
+
+    `desired_*` is what the plan wants; `written_*` is what Google last accepted. A row whose desired state differs
+    from its written state, or that is marked for deletion, is pending work for the writer. The Google event id is
+    derived from this row, so a retried insert gets 409 (already exists) instead of a duplicate event."""
+
+    __tablename__ = "block_event_links"
+    __table_args__ = (
+        UniqueConstraint("calendar_id", "google_event_id"),
+        Index("ix_block_links_pending", "state", "next_attempt_at"),
+    )
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    calendar_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("calendars.id", ondelete="CASCADE"))
+    task_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    slot: Mapped[int] = mapped_column(Integer, default=1)  # session number within the task's planned blocks
+    google_event_id: Mapped[str] = mapped_column(String(128))
+    desired_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    desired_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    desired_title: Mapped[str] = mapped_column(String(500), default="")
+    desired_private: Mapped[bool] = mapped_column(Boolean, default=False)
+    written_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    written_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    written_title: Mapped[str | None] = mapped_column(String(500))
+    etag: Mapped[str | None] = mapped_column(String(200))
+    # pending (needs writing) | synced | delete (needs removing from Google) | error | archived (in the past; kept)
+    state: Mapped[str] = mapped_column(String(16), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class WatchChannel(Base):
+    """A Google push-notification channel for one calendar. The token is stored hashed."""
+
+    __tablename__ = "watch_channels"
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    calendar_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("calendars.id", ondelete="CASCADE"), index=True)
+    channel_id: Mapped[str] = mapped_column(String(64), unique=True)
+    resource_id: Mapped[str | None] = mapped_column(String(256))
+    token_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

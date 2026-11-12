@@ -37,11 +37,12 @@ function SyncStatus() {
   const { data: accounts, reload } = useApi<GoogleAccount[]>("/google-accounts");
   const [busy, setBusy] = useState(false);
   useEffect(() => bus.on("calendars", reload), [reload]);
-  // Near-real-time: re-sync when the tab regains focus and every 10 minutes (webhooks arrive in Phase 3).
+  // Google push notifications (when set up) and the worker keep calendars fresh; as a fallback the app also
+  // re-syncs accounts that haven't synced for a couple of minutes when the tab regains focus.
   const sync = useCallback(async () => {
     setBusy(true);
     try {
-      await api("/calendars/sync", { method: "POST" });
+      await api("/calendars/sync?if_older_than=120", { method: "POST" });
       bus.emit("calendars");
     } catch {}
     setBusy(false);
@@ -141,6 +142,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         <NavLink href="/" label="Planner" active={path === "/"} />
         <NavLink href="/tasks" label="All tasks" active={path === "/tasks" && !view && !cat && !proj} />
         <NavLink href="/matrix" label="Priority matrix" active={path === "/matrix"} />
+        <NavLink href="/repeating" label="Repeating tasks" active={path === "/repeating"} />
         <NavLink href="/tasks?view=inbox" label="Inbox" count={inbox?.total} active={view === "inbox"} />
         <NavLink href="/tasks?view=overdue" label="Overdue" count={overdue?.total} active={view === "overdue"} />
         <NavLink href="/tasks?view=history" label="Completed" active={view === "history"} />

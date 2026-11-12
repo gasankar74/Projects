@@ -448,3 +448,86 @@ def test_invariants_on_random_workloads():
             if not t.can_split:
                 assert len(blocks_of(p, t.id)) <= 1
         assert len({(w.kind, w.task_id) for w in p.warnings}) == len(p.warnings), (seed, [(w.kind, w.task_id) for w in p.warnings])
+
+
+# -- Phase 3: scheduling profiles, travel, energy, near-term optimiser -------------------------------------------
+
+EVENINGS = {"name": "Personal", "work_hours": {d: [["18:00", "21:00"]] for d in ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]}}
+
+
+def test_profile_hours_replace_work_hours():
+    t = TaskInput("p", "Call the plumber", 60, profile_id="personal")
+    w = TaskInput("w", "Draft motion", 60)
+    p = plan(snap([t, w], profiles={"personal": EVENINGS}))
+    assert blocks_of(p, "p")[0].start == at(0, 18)
+    assert blocks_of(p, "w")[0].start == at(0, 9)
+    assert any("Personal" in x for x in blocks_of(p, "p")[0].reason["why"])
+
+
+def test_profile_daily_cap_spreads_work():
+    tasks = [TaskInput(f"p{i}", f"Errand {i}", 60, profile_id="personal") for i in range(3)]
+    prof = dict(EVENINGS, daily_cap_min=60)
+    p = plan(snap(tasks, profiles={"personal": prof}))
+    days = sorted(b.start.astimezone(NY).date() for b in p.blocks)
+    assert len(set(days)) == 3
+
+
+def test_unknown_profile_falls_back_to_work_hours():
+    t = TaskInput("p", "Thing", 60, profile_id="gone")
+    p = plan(snap([t], profiles={}))
+    assert blocks_of(p, "p")[0].start == at(0, 9)
+
+
+def test_travel_time_kept_around_task():
+    busy = [(at(0, 9), at(0, 10))]
+    t = TaskInput("v", "Site visit", 60, travel_min=30)
+    p = plan(snap([t], busy=busy))
+    b = blocks_of(p, "v")[0]
+    assert b.start == at(0, 10, 30)
+    assert any("travel" in x for x in b.reason["why"])
+
+
+def test_energy_preferences_place_high_and_low_energy_work():
+    hi = TaskInput("h", "Deep research", 60, energy="high")
+    lo = TaskInput("l", "Expense report", 60, energy="low")
+    p = plan(snap([hi, lo], optimize_hours=0))
+    assert blocks_of(p, "h")[0].start == at(0, 9)
+    assert blocks_of(p, "l")[0].start == at(0, 13)
+
+
+def test_optimiser_improves_greedy_plan_and_keeps_rules():
+    big = TaskInput("a", "Urgent filing", 180, priority="urgent")
+    small = TaskInput("b", "Outline talk", 60, priority="low", energy="high")
+    greedy = plan(snap([big, small], optimize_hours=0))
+    assert blocks_of(greedy, "a")[0].start == at(0, 9)
+    assert blocks_of(greedy, "b")[0].start == at(1, 9)  # morning gone today, so tomorrow morning
+    p = plan(snap([big, small]))
+    assert blocks_of(p, "b")[0].start == at(0, 9)
+    assert blocks_of(p, "a")[0].start == at(0, 10)
+    assert blocks_of(p, "b")[0].reason.get("optimised")
+    no_overlaps(p)
+
+
+def test_optimiser_never_moves_locked_or_breaks_dependencies():
+    a = TaskInput("a", "Research", 120, priority="low")
+    b = TaskInput("b", "Write", 60, priority="urgent", depends_on=("a",))
+    c = TaskInput("c", "Call", 60, priority="high", energy="high")
+    prev = [BlockInput("c", at(0, 15), at(0, 16), locked=True)]
+    p = plan(snap([a, b, c], previous=prev))
+    assert blocks_of(p, "c")[0].start == at(0, 15)
+    assert blocks_of(p, "b")[0].start >= blocks_of(p, "a")[-1].end
+    no_overlaps(p)
+
+
+def test_optimiser_is_deterministic():
+    import random
+
+    rnd = random.Random(3)
+    tasks = [
+        TaskInput(f"t{i}", f"T{i}", rnd.choice([30, 60, 90]), priority=rnd.choice(["urgent", "high", "medium", "low"]),
+                  energy=rnd.choice([None, "high", "low"]))
+        for i in range(10)
+    ]
+    a = plan(snap(tasks))
+    b = plan(snap(tasks))
+    assert [(x.task_id, x.start) for x in a.blocks] == [(x.task_id, x.start) for x in b.blocks]

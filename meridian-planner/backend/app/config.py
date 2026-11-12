@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     sync_past_days: int = 30
     sync_future_days: int = 180
 
+    # Public HTTPS address of the API (e.g. a Tailscale Funnel URL). When set, the app asks Google for push
+    # notifications at {public_url}/webhooks/google; when empty, calendars are polled every 10 minutes.
+    public_url: str = ""
+    # Most Google Calendar writes per minute (stays well inside Google's per-user quota).
+    google_writes_per_min: int = 120
+
 
 @lru_cache
 def get_settings() -> Settings:

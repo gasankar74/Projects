@@ -1,13 +1,14 @@
 """Categories and projects."""
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Category, Project, Task, User
+from ..models import Category, Project, SchedulingProfile, Task, User
 from ..schemas import CategoryIn, CategoryOut, CategoryPatch, ProjectIn, ProjectOut, ProjectPatch
 from ..security import current_user
 from ..services.tasks import DONE_STATES
@@ -40,10 +41,19 @@ def list_categories(user: User = Depends(current_user), db: Session = Depends(ge
 def create_category(body: CategoryIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     if db.scalar(select(Category).where(Category.user_id == user.id, Category.name == body.name)):
         raise HTTPException(409, "A category with that name exists")
+    _check_profile(db, user, body.scheduling_profile_id)
     c = Category(user_id=user.id, **body.model_dump())
     db.add(c)
     db.commit()
     return c
+
+
+def _check_profile(db: Session, user: User, pid) -> None:
+    if pid is None:
+        return
+    p = db.get(SchedulingProfile, pid)
+    if not p or p.user_id != user.id:
+        raise HTTPException(422, "Scheduling profile not found")
 
 
 def _own_category(db: Session, user: User, cid: uuid.UUID) -> Category:
@@ -56,7 +66,12 @@ def _own_category(db: Session, user: User, cid: uuid.UUID) -> Category:
 @router.patch("/categories/{cid}", response_model=CategoryOut)
 def patch_category(cid: uuid.UUID, body: CategoryPatch, user: User = Depends(current_user), db: Session = Depends(get_db)):
     c = _own_category(db, user, cid)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    fields = body.model_dump(exclude_unset=True)
+    if "scheduling_profile_id" in fields:
+        _check_profile(db, user, fields["scheduling_profile_id"])
+        user.schedule_dirty_at = datetime.now(timezone.utc)
+        user.schedule_dirty_reason = f"category \"{c.name}\" hours changed"
+    for k, v in fields.items():
         setattr(c, k, v)
     db.commit()
     return c

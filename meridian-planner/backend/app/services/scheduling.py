@@ -9,10 +9,10 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.orm import Session
 
-from ..models import Project, ScheduledBlock, ScheduleRun, Task, TaskDependency, User
+from ..models import Category, Project, SchedulingProfile, ScheduledBlock, ScheduleRun, Task, TaskDependency, User
 from ..scheduler.engine import DEFAULT_WEIGHTS, DEFAULT_WORK_HOURS, BlockInput, Plan, Settings, Snapshot, TaskInput, plan
 from .calendar_sync import busy_intervals
 
@@ -21,7 +21,15 @@ DONE_STATES = ("done", "cancelled")
 KEEP_RUNS = 50
 DEBOUNCE_S = 5
 
-SETTING_KEYS = {"work_hours", "horizon_days", "transition_min", "daily_cap_min", "default_min_session", "freeze_min", "risk_slack_min", "weights", "grid_min", "stability_gain_min"}
+ENGINE_KEYS = {
+    "work_hours", "horizon_days", "transition_min", "daily_cap_min", "default_min_session", "freeze_min", "risk_slack_min",
+    "weights", "grid_min", "stability_gain_min", "energy_hours", "optimize_hours", "holidays",
+}
+# Settings used around the engine: how far ahead blocks are written to Google, travel padding around events
+# that have a physical location.
+EXTRA_DEFAULTS = {"write_days": 14, "event_travel_min": 0}
+SETTING_KEYS = ENGINE_KEYS | set(EXTRA_DEFAULTS)
+NULLABLE_KEYS = {"daily_cap_min", "energy_hours"}
 
 
 def now_utc() -> datetime:
@@ -33,15 +41,25 @@ def now_utc() -> datetime:
 
 def get_settings(user: User) -> Settings:
     raw = dict((user.settings or {}).get("schedule") or {})
-    raw = {k: v for k, v in raw.items() if k in SETTING_KEYS}
+    raw = {k: v for k, v in raw.items() if k in ENGINE_KEYS}
     raw.setdefault("work_hours", DEFAULT_WORK_HOURS)
     raw["weights"] = {**DEFAULT_WEIGHTS, **(raw.get("weights") or {})}
+    if "energy_hours" in raw and raw["energy_hours"] is None:
+        raw["energy_hours"] = {}
+    if "holidays" in raw:
+        raw["holidays"] = tuple(sorted(raw["holidays"] or ()))
     return Settings(timezone=user.timezone, **raw)
+
+
+def extra_setting(user: User, key: str):
+    return ((user.settings or {}).get("schedule") or {}).get(key, EXTRA_DEFAULTS[key])
 
 
 def settings_out(user: User) -> dict:
     s = get_settings(user)
-    return {k: getattr(s, k) for k in sorted(SETTING_KEYS)} | {"timezone": s.timezone}
+    out = {k: getattr(s, k) for k in sorted(ENGINE_KEYS)} | {"timezone": s.timezone}
+    out["holidays"] = list(out["holidays"])
+    return out | {k: extra_setting(user, k) for k in EXTRA_DEFAULTS}
 
 
 def update_settings(db: Session, user: User, patch: dict) -> dict:
@@ -49,7 +67,7 @@ def update_settings(db: Session, user: User, patch: dict) -> dict:
     for k, v in patch.items():
         if k in SETTING_KEYS and v is not None:
             cur[k] = v
-        elif k in SETTING_KEYS and v is None and k == "daily_cap_min":
+        elif k in SETTING_KEYS and v is None and k in NULLABLE_KEYS:
             cur[k] = None
     user.settings = {**(user.settings or {}), "schedule": cur}
     mark_dirty(user, "settings changed")
@@ -81,8 +99,9 @@ def current_run(db: Session, user: User) -> ScheduleRun | None:
     ).first()
 
 
-def _task_input(t: Task, deps: list[uuid.UUID], projects: dict) -> TaskInput:
+def _task_input(t: Task, deps: list[uuid.UUID], projects: dict, cat_profiles: dict | None = None) -> TaskInput:
     proj = projects.get(t.project_id)
+    profile = t.scheduling_profile_id or (cat_profiles or {}).get(t.category_id)
     return TaskInput(
         id=str(t.id),
         title=t.title,
@@ -107,6 +126,8 @@ def _task_input(t: Task, deps: list[uuid.UUID], projects: dict) -> TaskInput:
         energy=t.energy,
         buffer_before_min=t.buffer_before_min,
         buffer_after_min=t.buffer_after_min,
+        profile_id=str(profile) if profile else None,
+        travel_min=t.travel_min or 0,
     )
 
 
@@ -135,18 +156,32 @@ def build_snapshot(db: Session, user: User, now: datetime | None = None, fresh: 
             if p.status in DONE_STATES or p.deleted_at is not None:
                 done.add(str(p.id))
     projects = {p.id: p for p in db.scalars(select(Project).where(Project.user_id == user.id))}
-    busy = busy_intervals(db, user, now - timedelta(days=1), now + timedelta(days=settings.horizon_days + 2))
+    profiles = {
+        str(p.id): {"name": p.name, "work_hours": p.work_hours or {}, "daily_cap_min": p.daily_cap_min}
+        for p in db.scalars(select(SchedulingProfile).where(SchedulingProfile.user_id == user.id))
+    }
+    cat_profiles = {
+        c.id: c.scheduling_profile_id
+        for c in db.scalars(select(Category).where(Category.user_id == user.id, Category.scheduling_profile_id.is_not(None)))
+        if str(c.scheduling_profile_id) in profiles
+    }
+    settings = replace(settings, profiles=profiles)
+    busy = busy_intervals(
+        db, user, now - timedelta(days=1), now + timedelta(days=settings.horizon_days + 2),
+        travel_min=int(extra_setting(user, "event_travel_min") or 0),
+    )
     previous: list[BlockInput] = []
     run = current_run(db, user)
     if run:
         open_ids = {str(i) for i in ids}
         for b in run.blocks:
             if b.end_at > now and str(b.task_id) in open_ids:
-                previous.append(BlockInput(str(b.task_id), b.start_at, b.end_at, b.locked))
+                note = (b.reason or {}).get("lock_note") if b.locked else None
+                previous.append(BlockInput(str(b.task_id), b.start_at, b.end_at, b.locked, note))
     return Snapshot(
         now=now,
         settings=settings,
-        tasks=tuple(sorted((_task_input(t, deps.get(t.id, []), projects) for t in tasks), key=lambda x: x.id)),
+        tasks=tuple(sorted((_task_input(t, deps.get(t.id, []), projects, cat_profiles) for t in tasks), key=lambda x: x.id)),
         busy=tuple(busy),
         previous=tuple(previous),
         done_task_ids=frozenset(done),
@@ -170,19 +205,36 @@ def replan(
     # One replan per user at a time (API requests and the worker can race); released at commit.
     db.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"), {"k": f"replan:{user.id}"})
     db.refresh(user)
+    seen_dirty = user.schedule_dirty_at
     snap = build_snapshot(db, user, now, fresh)
     h = snap.input_hash()
     cur = current_run(db, user)
     if cur and cur.input_hash == h and not force and not fresh:
-        user.schedule_dirty_at = None
+        _clear_dirty(db, user, seen_dirty)
         db.commit()
         return cur, None
     result = plan(snap)
-    run = save_plan(db, user, result, trigger, int((_time.perf_counter() - t0) * 1000))
+    run = save_plan(db, user, result, trigger, int((_time.perf_counter() - t0) * 1000), seen_dirty=seen_dirty)
     return run, result
 
 
-def save_plan(db: Session, user: User, result: Plan, trigger: str, duration_ms: int = 0, restored_from: uuid.UUID | None = None) -> ScheduleRun:
+_UNSET = object()
+
+
+def _clear_dirty(db: Session, user: User, seen) -> None:
+    """Clear the replan flag only if nobody set it again after this plan's snapshot was taken. A plain assignment
+    would overwrite a change committed meanwhile by another request (which this plan didn't see), and that change
+    would then never be planned."""
+    db.execute(
+        update(User)
+        .where(User.id == user.id, User.schedule_dirty_at.is_not_distinct_from(seen))
+        .values(schedule_dirty_at=None, schedule_dirty_reason=None)
+        .execution_options(synchronize_session=False)
+    )
+    db.expire(user, ["schedule_dirty_at", "schedule_dirty_reason"])
+
+
+def save_plan(db: Session, user: User, result: Plan, trigger: str, duration_ms: int = 0, restored_from: uuid.UUID | None = None, seen_dirty=_UNSET) -> ScheduleRun:
     run = ScheduleRun(
         user_id=user.id,
         trigger=trigger[:200],
@@ -201,13 +253,20 @@ def save_plan(db: Session, user: User, result: Plan, trigger: str, duration_ms: 
             run_id=run.id, user_id=user.id, task_id=uuid.UUID(b.task_id), start_at=b.start, end_at=b.end,
             session_index=b.session_index, session_count=b.session_count, locked=b.locked, reason=_jsonable(b.reason),
         ))
-    user.schedule_dirty_at = None
-    user.schedule_dirty_reason = None
     db.flush()
+    _clear_dirty(db, user, user.schedule_dirty_at if seen_dirty is _UNSET else seen_dirty)
     _prune(db, user)
+    _stage_writes(db, user)
     db.commit()
     db.refresh(run)
     return run
+
+
+def _stage_writes(db: Session, user: User) -> None:
+    """Queue the new plan's blocks for writing to Google (the worker sends them)."""
+    from . import calendar_write
+
+    calendar_write.plan_writes(db, user)
 
 
 def _jsonable(v):
@@ -266,8 +325,11 @@ def undo(db: Session, user: User) -> ScheduleRun:
     db.flush()
     db.expire(run)
     run.input_hash = build_snapshot(db, user).input_hash()
-    user.schedule_dirty_at = None
+    db.flush()
+    _clear_dirty(db, user, user.schedule_dirty_at)
     _prune(db, user)
+    db.flush()
+    _stage_writes(db, user)
     db.commit()
     db.refresh(run)
     return run
@@ -289,7 +351,7 @@ def set_block_locked(db: Session, user: User, block_id: uuid.UUID, locked: bool)
     why = [w for w in why if w != note]
     if locked:
         why.insert(0, note)
-    b.reason = {**(b.reason or {}), "why": why}
+    b.reason = {**{k: v for k, v in (b.reason or {}).items() if k != "lock_note"}, "why": why}
     mark_dirty(user, "block locked" if locked else "block unlocked")
     db.commit()
     return b
@@ -302,7 +364,7 @@ def move_block(db: Session, user: User, block_id: uuid.UUID, start: datetime) ->
     b.start_at = start
     b.end_at = start + dur
     b.locked = True
-    b.reason = {**(b.reason or {}), "why": ["Moved and locked by you"], "bound_by": "locked"}
+    b.reason = {**(b.reason or {}), "why": ["Moved and locked by you"], "bound_by": "locked", "lock_note": "Moved and locked by you"}
     db.commit()
     run, _ = replan(db, user, trigger="block moved", force=True)
     return run
