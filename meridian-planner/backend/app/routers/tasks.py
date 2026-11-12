@@ -38,6 +38,7 @@ def list_tasks(
     view: Literal["active", "inbox", "history", "overdue", "all"] = "active",
     category_id: uuid.UUID | None = None,
     project_id: uuid.UUID | None = None,
+    series_id: uuid.UUID | None = None,
     priority: list[str] | None = Query(default=None),
     status: list[str] | None = Query(default=None),
     q: str | None = None,
@@ -65,6 +66,8 @@ def list_tasks(
         conds.append(Task.category_id == category_id)
     if project_id:
         conds.append(Task.project_id == project_id)
+    if series_id:
+        conds.append(Task.series_id == series_id)
     if priority:
         conds.append(Task.priority.in_(priority))
     if status:

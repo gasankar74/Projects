@@ -34,6 +34,7 @@ TIME_OF_DAY = {"morning": (time(0), time(12)), "afternoon": (time(12), time(17))
 DAY_NAMES = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 DEFAULT_WORK_HOURS = {d: [["09:00", "17:00"]] for d in DAY_NAMES[:5]} | {"sat": [], "sun": []}
+DEFAULT_ENERGY_HOURS = {"high": ["09:00", "12:00"], "low": ["13:00", "16:00"]}
 DEFAULT_WEIGHTS = {"P": 0.30, "U": 0.30, "C": 0.10, "B": 0.10, "J": 0.05, "R": 0.05, "A": 0.10}
 
 Span = tuple[datetime, datetime]
@@ -56,6 +57,14 @@ class Settings:
     stability_gain_min: int = 120  # a still-valid block only moves if it can start this much earlier
     risk_slack_min: int = 240  # finish closer than this (in working minutes) to a deadline = at risk
     weights: dict = field(default_factory=lambda: DEFAULT_WEIGHTS)
+    # Scheduling profiles: {profile_id: {"name":..., "work_hours": {...}, "daily_cap_min": int|None}}. A task in a
+    # profile is placed only in that profile's hours (which may differ from the default work hours).
+    profiles: dict = field(default_factory=dict)
+    # Energy-aware placement: tasks marked high/low energy prefer these hours (a preference, not a rule).
+    energy_hours: dict = field(default_factory=lambda: DEFAULT_ENERGY_HOURS)
+    # The next this-many hours are re-arranged by the CP-SAT optimiser after the constructive pass (0 = off).
+    optimize_hours: int = 48
+    holidays: tuple = ()  # ISO dates with no default work hours (profiles keep their own hours)
 
 
 @dataclass(frozen=True)
@@ -83,6 +92,8 @@ class TaskInput:
     energy: str | None = None
     buffer_before_min: int = 0
     buffer_after_min: int = 0
+    profile_id: str | None = None  # scheduling profile (hours and cap); None = default work hours
+    travel_min: int = 0  # travel each way, kept free before and after every session
 
 
 @dataclass(frozen=True)
@@ -93,6 +104,7 @@ class BlockInput:
     start: datetime
     end: datetime
     locked: bool = False
+    note: str | None = None  # why it's locked, e.g. "Moved by you in Google Calendar"
 
 
 @dataclass(frozen=True)
@@ -294,7 +306,11 @@ class _Planner:
         self.end = self.start + timedelta(days=self.st.horizon_days)
         self.first_day = self.start.astimezone(self.tz).date()
         self.last_day = self.end.astimezone(self.tz).date()
-        self.tasks = {t.id: t for t in snap.tasks}
+        # Travel is time the task needs on either side, so it behaves like a buffer.
+        self.tasks = {
+            t.id: (replace(t, buffer_before_min=t.buffer_before_min + t.travel_min, buffer_after_min=t.buffer_after_min + t.travel_min) if t.travel_min else t)
+            for t in snap.tasks
+        }
         self.warnings: list[Warning_] = []
         self.blocks: list[Block] = []
         self.task_blocks: dict[str, list[Block]] = {}
@@ -305,8 +321,21 @@ class _Planner:
             for i, name in enumerate(DAY_NAMES)
         }
         self.work = _clip(_local_spans(self.tz, self.first_day, self.last_day, wh), self.start, self.end)
+        for h in self.st.holidays or ():
+            hd = date.fromisoformat(h) if isinstance(h, str) else h
+            day = (datetime.combine(hd, time(0), self.tz).astimezone(UTC), datetime.combine(hd + timedelta(days=1), time(0), self.tz).astimezone(UTC))
+            self.work = _subtract(self.work, day)
+        self.profile_hours: dict[str, list[Span]] = {}
+        for pid, prof in (self.st.profiles or {}).items():
+            ph = {
+                i: [(_parse_hm(a), _parse_hm(b)) for a, b in (prof.get("work_hours") or {}).get(name, [])]
+                for i, name in enumerate(DAY_NAMES)
+            }
+            self.profile_hours[pid] = _clip(_local_spans(self.tz, self.first_day, self.last_day, ph), self.start, self.end)
         self.busy = sorted((max(s, self.start), min(e, self.end)) for s, e in snap.busy if e > self.start and s < self.end)
-        free = list(self.work)
+        # Free time is kept for the whole horizon (not only work hours) because profiles can have other hours;
+        # each task is then limited to its own hours in candidate_spans().
+        free = [(self.start, self.end)]
         for b in self.busy:
             free = _subtract(free, b)
         self.free_after_events = free  # capacity before any task is placed
@@ -320,6 +349,17 @@ class _Planner:
 
     def local_day(self, dt: datetime) -> date:
         return dt.astimezone(self.tz).date()
+
+    def task_hours(self, t: TaskInput) -> list[Span]:
+        """The working hours that apply to this task: its scheduling profile's, or the default work hours."""
+        if t.profile_id and t.profile_id in self.profile_hours:
+            return self.profile_hours[t.profile_id]
+        return self.work
+
+    def profile_cap(self, t: TaskInput) -> int | None:
+        if t.profile_id and t.profile_id in (self.st.profiles or {}):
+            return (self.st.profiles[t.profile_id] or {}).get("daily_cap_min")
+        return None
 
     def task_windows(self, t: TaskInput) -> list[Span] | None:
         """The task's own allowed time, or None when it may use any working time."""
@@ -347,6 +387,10 @@ class _Planner:
         self.task_blocks.setdefault(block.task_id, []).append(block)
         d = self.local_day(block.start)
         self.day_used[d] = self.day_used.get(d, 0) + block.minutes
+        t = self.tasks.get(block.task_id)
+        if t and t.profile_id:
+            k = (t.profile_id, d)
+            self.day_used[k] = self.day_used.get(k, 0) + block.minutes
 
     def release(self, task_id: str) -> list[Block]:
         gone = self.task_blocks.pop(task_id, [])
@@ -354,10 +398,26 @@ class _Planner:
             return []
         self.blocks = [b for b in self.blocks if b.task_id != task_id]
         for b in gone:
-            d = self.local_day(b.start)
-            self.day_used[d] -= b.minutes
+            self._unuse(b)
         self._rebuild_free()
         return gone
+
+    def _recompute_usage(self) -> None:
+        self.day_used = {}
+        for b in self.blocks:
+            d = self.local_day(b.start)
+            self.day_used[d] = self.day_used.get(d, 0) + b.minutes
+            t = self.tasks.get(b.task_id)
+            if t and t.profile_id:
+                self.day_used[(t.profile_id, d)] = self.day_used.get((t.profile_id, d), 0) + b.minutes
+        self._rebuild_free()
+
+    def _unuse(self, b: Block) -> None:
+        d = self.local_day(b.start)
+        self.day_used[d] -= b.minutes
+        t = self.tasks.get(b.task_id)
+        if t and t.profile_id:
+            self.day_used[(t.profile_id, d)] -= b.minutes
 
     def _rebuild_free(self) -> None:
         free = list(self.free_after_events)
@@ -404,7 +464,10 @@ class _Planner:
             parts["J"] = round(j, 3)
             parts["R"] = round(min(1.0, t.completion_pct / 100), 3)
             win = self.task_windows(t)
-            parts["A"] = round(1 - min(1.0, _minutes(_intersect(win, self.work)) / total_work), 3) if win is not None else 0.0
+            hours = self.task_hours(t)
+            if win is not None:
+                hours = _intersect(win, hours)
+            parts["A"] = round(1 - min(1.0, _minutes(hours) / total_work), 3) if (win is not None or t.profile_id in self.profile_hours) else 0.0
             w = self.st.weights
             score = 100 * sum(w.get(k, 0) * v for k, v in parts.items()) / max(1e-9, sum(w.values()))
             out[t.id] = (round(score, 1), parts)
@@ -417,7 +480,7 @@ class _Planner:
     # -- stage 3: placement ---------------------------------------------------------------------------------
 
     def candidate_spans(self, t: TaskInput, until: datetime | None, base: list[Span] | None = None, after: datetime | None = None) -> list[Span]:
-        spans = list(self.free if base is None else base)
+        spans = _intersect(list(self.free if base is None else base), self.task_hours(t))
         win = self.task_windows(t)
         if win is not None:
             spans = _intersect(spans, win)
@@ -453,13 +516,22 @@ class _Planner:
         one_per_day = bool(t.min_session_min and t.max_session_min and t.min_session_min == t.max_session_min)
         return lo, hi, one_per_day
 
+    def preferred_hours(self, t: TaskInput) -> tuple[time, time] | None:
+        """Part of the day to try first: the task's own preference, else its energy level's hours."""
+        if t.preferred_time_of_day in TIME_OF_DAY:
+            return TIME_OF_DAY[t.preferred_time_of_day]
+        rng = (self.st.energy_hours or {}).get(t.energy or "")
+        if rng:
+            return _parse_hm(rng[0]), _parse_hm(rng[1])
+        return None
+
     def try_place(self, t: TaskInput, need: int, until: datetime | None, after: datetime | None) -> list[Block]:
         """Find slots for `need` minutes. Returns blocks (not yet reserved); fewer minutes than asked if not all fit.
         A task that can't be split gets all of its time or nothing."""
         need = int(math.ceil(need / self.grid) * self.grid)
         lo, hi, one_per_day = self.session_bounds(t, need)
         spans = self.candidate_spans(t, until, after=after)
-        pref = TIME_OF_DAY.get(t.preferred_time_of_day or "")
+        pref = self.preferred_hours(t)
         order = spans
         if pref:
             # Preferred part of the day first, the rest after, both in time order (still before any deadline).
@@ -508,6 +580,10 @@ class _Planner:
                     cap = self.st.daily_cap_min
                     if cap is not None:
                         room = cap - self.day_used.get(day, 0) - day_extra.get(day, 0)
+                        avail = min(avail, room - room % self.grid)
+                    pcap = self.profile_cap(t)
+                    if pcap is not None:
+                        room = pcap - self.day_used.get((t.profile_id, day), 0) - day_extra.get(day, 0)
                         avail = min(avail, room - room % self.grid)
                     if not t.can_split:
                         if avail < left:
@@ -565,7 +641,9 @@ class _Planner:
                 if end <= start:
                     continue
             blk = Block(b.task_id, start, end, locked=b.locked)
-            blk.reason = {"why": ["Locked by you" if b.locked else "Already started or starting within %d min, so it stays put" % st.freeze_min], "bound_by": "locked" if b.locked else "frozen"}
+            blk.reason = {"why": [(b.note or "Locked by you") if b.locked else "Already started or starting within %d min, so it stays put" % st.freeze_min], "bound_by": "locked" if b.locked else "frozen"}
+            if b.locked and b.note:
+                blk.reason["lock_note"] = b.note
             if any(_overlaps((blk.start, blk.end), x) for x in self.busy) and b.locked:
                 self.warnings.append(Warning_("locked_conflict", b.task_id, f"\"{self.tasks[b.task_id].title}\" is locked at {self.fmt(blk.start)} but now overlaps a calendar event. It was kept where you locked it.", {"start": blk.start.isoformat()}))
             self.reserve(blk)
@@ -582,6 +660,11 @@ class _Planner:
 
         for tid in order:
             self._place_task(self.tasks[tid], fixed_min.get(tid, 0), prev_by_task.get(tid, []), scores)
+
+        if not getattr(self, "_simulating", False):
+            from .optimize import optimize_near_term
+
+            self.optimised_blocks = optimize_near_term(self)
 
         self._finish_results(prev_by_task)
         days = self._day_summary()
@@ -697,6 +780,14 @@ class _Planner:
                 per[d] = per.get(d, 0) + _minutes([(b.start, b.end)])
             if any(self.day_used.get(d, 0) + m > self.st.daily_cap_min for d, m in per.items()):
                 return None
+        pcap = self.profile_cap(t)
+        if pcap is not None:
+            per = {}
+            for b in future:
+                d = self.local_day(b.start)
+                per[d] = per.get(d, 0) + _minutes([(b.start, b.end)])
+            if any(self.day_used.get((t.profile_id, d), 0) + m > pcap for d, m in per.items()):
+                return None
         return [Block(t.id, b.start, b.end) for b in future]
 
     def _repair(self, t, need, deadline, after, scores) -> list[Block] | None:
@@ -769,7 +860,7 @@ class _Planner:
             for b in blocks:
                 self.blocks.remove(b)
                 self.task_blocks[t.id].remove(b)
-                self.day_used[self.local_day(b.start)] -= b.minutes
+                self._unuse(b)
             if not self.task_blocks.get(t.id):
                 self.task_blocks.pop(t.id, None)
             self._rebuild_free()
@@ -813,6 +904,13 @@ class _Planner:
             out.append(f"Not before {self.fmt(t.earliest_start)}")
         if t.preferred_time_of_day:
             out.append(f"Your preferred time: {t.preferred_time_of_day}")
+        elif t.energy in (self.st.energy_hours or {}):
+            a, b = self.st.energy_hours[t.energy]
+            out.append(f"{t.energy.capitalize()}-energy work, so it goes in your {t.energy}-energy hours ({a}-{b}) when they're free")
+        if t.profile_id and t.profile_id in (self.st.profiles or {}):
+            out.append(f"Uses your \"{self.st.profiles[t.profile_id].get('name', 'custom')}\" hours")
+        if t.travel_min:
+            out.append(f"Keeps {t.travel_min} min travel time before and after")
         if t.windows or t.allowed_days is not None:
             out.append("Only in the hours you allowed for this task")
         if n > 1:
@@ -875,7 +973,7 @@ class _Planner:
         free_by_day: dict[date, int] = {}
         for s, e in self.work:
             work_by_day[self.local_day(s)] = work_by_day.get(self.local_day(s), 0) + _minutes([(s, e)])
-        for s, e in self.free_after_events:
+        for s, e in _intersect(self.free_after_events, self.work):
             free_by_day[self.local_day(s)] = free_by_day.get(self.local_day(s), 0) + _minutes([(s, e)])
         while d <= self.last_day and len(out) < 14:
             out.append({"date": d.isoformat(), "work_min": work_by_day.get(d, 0), "free_min": free_by_day.get(d, 0), "planned_min": self.day_used.get(d, 0)})

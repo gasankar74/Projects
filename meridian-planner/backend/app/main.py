@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
-from .routers import auth, calendars, data, organize, schedule, tasks
+from .routers import auth, calendars, data, organize, schedule, series, tasks, webhooks
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
@@ -19,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for r in (auth.router, tasks.router, organize.router, calendars.router, data.router, schedule.router):
+for r in (auth.router, tasks.router, organize.router, calendars.router, data.router, schedule.router, series.router, webhooks.router):
     app.include_router(r)
 
 

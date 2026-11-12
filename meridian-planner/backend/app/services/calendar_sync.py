@@ -131,10 +131,18 @@ def sync_calendar_events(db: Session, cal: Calendar, client: GoogleClient, token
     }
     seen: set[str] = set()
     created = updated = cancelled = 0
+    from .calendar_write import on_synced_block
+
+    moved = 0
     for item in items:
         gid = item["id"]
         seen.add(gid)
         ev = existing.get(gid)
+        priv = (item.get("extendedProperties") or {}).get("private") or {}
+        if TASK_BLOCK_KEY in priv or (ev is not None and ev.is_task_block) or item.get("status") == "cancelled":
+            # One of our task blocks: a new time means the user moved it in Google (lock it there).
+            if on_synced_block(db, cal, item) == "moved":
+                moved += 1
         if item.get("status") == "cancelled":
             if ev is not None and ev.status != "cancelled":
                 ev.status = "cancelled"
@@ -164,7 +172,9 @@ def sync_calendar_events(db: Session, cal: Calendar, client: GoogleClient, token
     cal.last_synced_at = now_utc()
     cal.last_error = None
     db.commit()
-    return {"created": created, "updated": updated, "cancelled": cancelled, "removed": removed, "full": full}
+    cal.sync_requested_at = None
+    db.commit()
+    return {"created": created, "updated": updated, "cancelled": cancelled, "removed": removed, "full": full, "moved": moved}
 
 
 def sync_account(db: Session, account: GoogleAccount, client: GoogleClient) -> dict:
@@ -182,7 +192,7 @@ def sync_account(db: Session, account: GoogleAccount, client: GoogleClient) -> d
             try:
                 res = sync_calendar_events(db, cal, client, token, tz_fallback)
                 result["calendars"][cal.summary] = res
-                if user and any(res.get(k) for k in ("created", "updated", "cancelled", "removed")):
+                if user and any(res.get(k) for k in ("created", "updated", "cancelled", "removed", "moved")):
                     user.schedule_dirty_at = now_utc()
                     user.schedule_dirty_reason = f"calendar \"{cal.summary}\" changed"
                     db.commit()
@@ -218,8 +228,20 @@ def sync_user(db: Session, user: User, client: GoogleClient) -> list[dict]:
     return [sync_account(db, a, client) for a in accounts]
 
 
-def busy_intervals(db: Session, user: User, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
-    """Merged busy time across every selected, time-blocking calendar (overlaps collapse into one interval)."""
+ONLINE_HINTS = ("http://", "https://", "zoom.us", "meet.google", "teams.microsoft", "webex", "online", "virtual", "phone", "call")
+
+
+def needs_travel(location: str | None) -> bool:
+    """A location that looks like a physical place (not a video link or a phone call)."""
+    if not location or not location.strip():
+        return False
+    low = location.lower()
+    return not any(h in low for h in ONLINE_HINTS)
+
+
+def busy_intervals(db: Session, user: User, start: datetime, end: datetime, travel_min: int = 0) -> list[tuple[datetime, datetime]]:
+    """Merged busy time across every selected, time-blocking calendar (overlaps collapse into one interval).
+    With travel_min, events at a physical location also block that much time before and after."""
     rows = db.scalars(
         select(CalendarEvent)
         .join(Calendar, Calendar.id == CalendarEvent.calendar_id)
@@ -231,7 +253,10 @@ def busy_intervals(db: Session, user: User, start: datetime, end: datetime) -> l
             CalendarEvent.end_at > start,
         )
     ).all()
-    spans = sorted((max(e.start_at, start), min(e.end_at, end)) for e in rows if e.is_busy and e.start_at and e.end_at)
+    pad = lambda e: timedelta(minutes=travel_min if travel_min and needs_travel(e.location) else 0)  # noqa: E731
+    spans = sorted(
+        (max(e.start_at - pad(e), start), min(e.end_at + pad(e), end)) for e in rows if e.is_busy and e.start_at and e.end_at
+    )
     merged: list[list[datetime]] = []
     for s, e in spans:
         if merged and s <= merged[-1][1]:

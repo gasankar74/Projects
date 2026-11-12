@@ -16,6 +16,55 @@ export interface Category {
   position: number;
   default_priority: Priority;
   open_count: number;
+  scheduling_profile_id: string | null;
+}
+
+export interface Recurrence {
+  kind?: "fixed" | "after_completion";
+  rrule?: string;
+  every?: number;
+  unit?: "days" | "weeks" | "months" | "years";
+  due_time?: string;
+  adjust?: "none" | "previous" | "next";
+  lead_days?: number;
+  until?: string;
+  count?: number;
+  missed?: "keep" | "skip" | "latest_only";
+  text?: string;
+}
+
+export interface Series {
+  id: string;
+  title: string;
+  template: Record<string, unknown>;
+  rule: Recurrence;
+  anchor: string;
+  missed_policy: "keep" | "skip" | "latest_only";
+  generate_ahead_days: number;
+  active: boolean;
+  last_generated_due: string | null;
+  generated_count: number;
+  description: string;
+  upcoming: string[];
+  open_count: number;
+}
+
+export interface Profile {
+  id: string;
+  name: string;
+  color: string | null;
+  work_hours: Record<string, [string, string][]>;
+  daily_cap_min: number | null;
+  position: number;
+}
+
+export interface WriteStatus {
+  calendar_id: string | null;
+  calendar: string | null;
+  synced: number;
+  pending: number;
+  errors: number;
+  last_error: string | null;
 }
 
 export interface Project {
@@ -71,7 +120,12 @@ export interface Task {
   buffer_after_min: number;
   energy: "high" | "medium" | "low" | null;
   calendar_id: string | null;
-  recurrence: { rrule: string; text?: string; kind?: string } | null;
+  scheduling_profile_id: string | null;
+  location: string | null;
+  travel_min: number;
+  recurrence: Recurrence | null;
+  series_id: string | null;
+  occurrence_due: string | null;
   tags: string[];
   links: { title: string; url: string }[];
   confidential: boolean;
@@ -96,6 +150,7 @@ export interface BlockReason {
   parts?: Record<string, number>;
   why?: string[];
   bound_by?: string;
+  optimised?: boolean;
 }
 
 export interface Block {
@@ -148,6 +203,11 @@ export interface ScheduleSettings {
   risk_slack_min: number;
   grid_min: number;
   weights: Record<string, number>;
+  energy_hours: { high?: [string, string]; low?: [string, string] };
+  optimize_hours: number;
+  holidays: string[];
+  write_days: number;
+  event_travel_min: number;
 }
 
 export interface TaskEvent {
@@ -178,6 +238,7 @@ export interface Calendar {
   blocks_time: boolean;
   is_task_target: boolean;
   writable: boolean;
+  push_enabled: boolean;
   last_synced_at: string | null;
   last_error: string | null;
 }

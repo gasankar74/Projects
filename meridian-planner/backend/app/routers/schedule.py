@@ -84,6 +84,21 @@ class BlockPatch(BaseModel):
     start: datetime | None = None
 
 
+def check_work_hours(v):
+    if v is None:
+        return v
+    for day, spans in v.items():
+        if day not in DAY_NAMES:
+            raise ValueError(f"Unknown day {day!r}; use {', '.join(DAY_NAMES)}")
+        for sp in spans:
+            if len(sp) != 2:
+                raise ValueError("Each span is [start, end], like [\"09:00\", \"17:00\"]")
+            a, b = (time.fromisoformat(x) if x != "24:00" else time(23, 59) for x in sp)
+            if a >= b:
+                raise ValueError(f"{day}: {sp[0]} must be before {sp[1]}")
+    return v
+
+
 class SettingsPatch(BaseModel):
     work_hours: dict[str, list[list[str]]] | None = None
     horizon_days: int | None = Field(default=None, ge=7, le=180)
@@ -93,22 +108,32 @@ class SettingsPatch(BaseModel):
     freeze_min: int | None = Field(default=None, ge=0, le=240)
     risk_slack_min: int | None = Field(default=None, ge=0, le=60 * 24 * 7)
     weights: dict[str, float] | None = None
+    energy_hours: dict[str, list[str]] | None = None
+    optimize_hours: int | None = Field(default=None, ge=0, le=168)
+    holidays: list[date] | None = None
+    write_days: int | None = Field(default=None, ge=1, le=60)
+    event_travel_min: int | None = Field(default=None, ge=0, le=240)
 
     @field_validator("work_hours")
     @classmethod
     def check_hours(cls, v):
+        return check_work_hours(v)
+
+    @field_validator("energy_hours")
+    @classmethod
+    def check_energy(cls, v):
         if v is None:
             return v
-        for day, spans in v.items():
-            if day not in DAY_NAMES:
-                raise ValueError(f"Unknown day {day!r}; use {', '.join(DAY_NAMES)}")
-            for sp in spans:
-                if len(sp) != 2:
-                    raise ValueError("Each span is [start, end], like [\"09:00\", \"17:00\"]")
-                a, b = (time.fromisoformat(x) if x != "24:00" else time(23, 59) for x in sp)
-                if a >= b:
-                    raise ValueError(f"{day}: {sp[0]} must be before {sp[1]}")
+        for k, sp in v.items():
+            if k not in ("high", "low"):
+                raise ValueError("Energy hours are set for high and low")
+            check_work_hours({"mon": [sp]})
         return v
+
+    @field_validator("holidays")
+    @classmethod
+    def iso_holidays(cls, v):
+        return None if v is None else sorted({d.isoformat() for d in v})
 
     @field_validator("weights")
     @classmethod

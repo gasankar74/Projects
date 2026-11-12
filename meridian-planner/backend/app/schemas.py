@@ -44,6 +44,7 @@ class CategoryIn(BaseModel):
     color: str = "#6366f1"
     position: int = 0
     default_priority: Priority = "medium"
+    scheduling_profile_id: uuid.UUID | None = None
 
 
 class CategoryPatch(BaseModel):
@@ -51,6 +52,7 @@ class CategoryPatch(BaseModel):
     color: str | None = None
     position: int | None = None
     default_priority: Priority | None = None
+    scheduling_profile_id: uuid.UUID | None = None
 
 
 class CategoryOut(ORM):
@@ -59,6 +61,7 @@ class CategoryOut(ORM):
     color: str
     position: int
     default_priority: str
+    scheduling_profile_id: uuid.UUID | None = None
     open_count: int = 0
 
 
@@ -149,6 +152,9 @@ class TaskFields(BaseModel):
     buffer_after_min: int | None = Field(default=None, ge=0, le=480)
     energy: Literal["high", "medium", "low"] | None = None
     calendar_id: uuid.UUID | None = None
+    scheduling_profile_id: uuid.UUID | None = None
+    location: str | None = Field(default=None, max_length=500)
+    travel_min: int | None = Field(default=None, ge=0, le=480)
     recurrence: dict | None = None
     tags: list[str] | None = None
     links: list[Link] | None = None
@@ -207,7 +213,12 @@ class TaskOut(ORM):
     buffer_after_min: int
     energy: str | None
     calendar_id: uuid.UUID | None
+    scheduling_profile_id: uuid.UUID | None = None
+    location: str | None = None
+    travel_min: int = 0
     recurrence: dict | None
+    series_id: uuid.UUID | None = None
+    occurrence_due: date | None = None
     tags: list[str]
     links: list
     confidential: bool
@@ -288,6 +299,7 @@ class CalendarOut(ORM):
     writable: bool
     last_synced_at: datetime | None
     last_error: str | None
+    push_enabled: bool = False
 
 
 class CalendarPatch(BaseModel):
@@ -319,3 +331,61 @@ class EventOut(ORM):
 class BusyOut(BaseModel):
     start: datetime
     end: datetime
+
+
+class ProfileIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    color: str | None = None
+    work_hours: dict[str, list[list[str]]] = Field(default_factory=dict)
+    daily_cap_min: int | None = Field(default=None, ge=15, le=24 * 60)
+    position: int = 0
+
+
+class ProfilePatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    color: str | None = None
+    work_hours: dict[str, list[list[str]]] | None = None
+    daily_cap_min: int | None = Field(default=None, ge=15, le=24 * 60)
+    position: int | None = None
+
+
+class ProfileOut(ORM):
+    id: uuid.UUID
+    name: str
+    color: str | None
+    work_hours: dict
+    daily_cap_min: int | None
+    position: int
+
+
+class SeriesPatch(BaseModel):
+    """Changes to a repeating task. Template fields apply to future occurrences that haven't been started."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    rule: dict | None = None
+    missed_policy: Literal["keep", "skip", "latest_only"] | None = None
+    generate_ahead_days: int | None = Field(default=None, ge=1, le=120)
+    active: bool | None = None
+    template: dict | None = None
+
+
+class SeriesOut(ORM):
+    id: uuid.UUID
+    title: str
+    template: dict
+    rule: dict
+    anchor: date
+    missed_policy: str
+    generate_ahead_days: int
+    active: bool
+    last_generated_due: date | None
+    generated_count: int
+    description: str = ""
+    upcoming: list[date] = []
+    open_count: int = 0
+
+
+class RulePreviewIn(BaseModel):
+    rule: dict
+    start: date | None = None
+    count: int = Field(default=6, ge=1, le=40)

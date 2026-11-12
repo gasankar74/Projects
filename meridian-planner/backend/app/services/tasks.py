@@ -9,7 +9,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Calendar, Category, ChecklistItem, Project, ScheduleRun, Task, TaskDependency, TaskEvent, User
+from ..models import Calendar, Category, ChecklistItem, Project, SchedulingProfile, ScheduleRun, Task, TaskDependency, TaskEvent, User
+from . import recurrence as rec_service
 from ..schemas import TaskCreate, TaskFields, TaskOut
 
 DONE_STATES = ("done", "cancelled")
@@ -60,6 +61,9 @@ def _check_owned(db: Session, user: User, model, obj_id: uuid.UUID | None, label
 def _validate(db: Session, user: User, task: Task) -> None:
     _check_owned(db, user, Category, task.category_id, "Category")
     _check_owned(db, user, Project, task.project_id, "Project")
+    _check_owned(db, user, SchedulingProfile, task.scheduling_profile_id, "Scheduling profile")
+    if task.recurrence is not None and not isinstance(task.recurrence, dict):
+        raise HTTPException(422, "recurrence must be an object")
     if task.calendar_id is not None:
         cal = db.get(Calendar, task.calendar_id)
         if not cal or cal.user_id != user.id:
@@ -122,6 +126,8 @@ def create_task(db: Session, user: User, data: TaskCreate, actor: str = "user", 
     for i, text in enumerate(data.checklist):
         db.add(ChecklistItem(task_id=task.id, text=text, position=i))
     record(db, task, "created", {k: v for k, v in fields.items() if v is not None}, actor)
+    if task.recurrence:
+        rec_service.attach_series(db, user, task)
     db.commit()
     db.refresh(task)
     return task
@@ -159,6 +165,10 @@ def update_task(db: Session, user: User, task: Task, patch: TaskFields, actor: s
     _apply_progress(task, fields, old_duration)
     _validate(db, user, task)
     record(db, task, "updated", diff, actor)
+    if "recurrence" in diff:
+        rec_service.attach_series(db, user, task)
+    if diff.get("status", {}).get("to") == "done":
+        rec_service.on_completed(db, user, task)
     db.commit()
     db.refresh(task)
     return task
@@ -175,6 +185,7 @@ def complete_task(db: Session, user: User, task: Task, actor: str = "user") -> T
     record(db, task, "completed", {"status": {"from": prev, "to": "done"}}, actor)
     for item in task.checklist:
         item.done = True
+    rec_service.on_completed(db, user, task)
     db.commit()
     db.refresh(task)
     return task

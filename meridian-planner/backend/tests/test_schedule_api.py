@@ -276,3 +276,23 @@ def test_settings_validation_and_isolation(client):
     assert client.patch(f"/schedule/blocks/{b_id}", json={"locked": True}).status_code == 404
     assert client.get(f"/schedule/tasks/{a['id']}/why").status_code == 404
     assert schedule(client)["blocks"] == []
+
+
+def test_change_made_during_a_replan_is_not_lost(authed):
+    """A task saved while a replan is running (after its snapshot) must leave the user marked for another replan."""
+    from app.services import scheduling
+
+    setup(authed)
+    task(authed, title="First")
+    with session_factory()() as db:
+        user = db.query(User).one()
+        seen = user.schedule_dirty_at  # what the replan saw when it took its snapshot
+        snap = scheduling.build_snapshot(db, user)
+        # Meanwhile another request saves a task and marks the user dirty again (committed).
+        with session_factory()() as other:
+            u2 = other.get(User, user.id)
+            scheduling.mark_dirty(u2, "task created: Second")
+            other.commit()
+        scheduling.save_plan(db, user, scheduling.plan(snap), "test", seen_dirty=seen)
+        db.refresh(user)
+        assert user.schedule_dirty_at is not None and user.schedule_dirty_reason == "task created: Second"

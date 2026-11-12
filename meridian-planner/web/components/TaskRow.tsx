@@ -1,5 +1,6 @@
 "use client";
 
+import { describeRecurrence } from "./RepeatEditor";
 import { useState } from "react";
 import { api, bus } from "@/lib/api";
 import { fmtDeadline, fmtDuration } from "@/lib/dates";
@@ -52,7 +53,7 @@ export function TaskRow({ task, compact = false }: { task: Task; compact?: boole
         <div className={`flex items-center gap-1.5 text-sm ${done ? "text-stone-400 line-through" : ""}`}>
           {task.confidential && <span title="Confidential">🔒</span>}
           <span className="truncate">{task.title}</span>
-          {task.recurrence && <span title={task.recurrence.text ?? "Repeats"} className="text-stone-400">↻</span>}
+          {task.recurrence && <span title={`Repeats: ${describeRecurrence(task.recurrence)}`} className="text-stone-400">↻</span>}
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-stone-500">
           <span className={`chip ${PRIORITY_STYLE[task.priority]}`}>{PRIORITY_LABEL[task.priority]}</span>

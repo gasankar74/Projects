@@ -211,7 +211,15 @@ def parse(text: str, now: datetime) -> QuickAddResult:
     # Recurrence (before deadlines, so "every Friday" is not read as "by Friday")
     rule = None
     rec_text = None
-    patterns = [
+    rec_extra: dict = {}
+    # Completion-based: "every 2 weeks after it's done", "3 days after completion"
+    m = re.search(r"\b(?:every\s+)?(\d+|one|two|three|four|six|a)\s+(day|week|month|year)s?\s+after\s+(?:it'?s\s+|it\s+is\s+|each\s+one\s+is\s+)?(?:done|completed?|completion|finished)\b", s, re.I)
+    if m:
+        n = 1 if m.group(1).lower() == "a" else (NUMBER_WORDS.get(m.group(1).lower()) or int(m.group(1)))
+        rec_extra = {"kind": "after_completion", "every": n, "unit": m.group(2).lower() + "s"}
+        rec_text = m.group(0).strip()
+        s = s[: m.start()] + " " + s[m.end():]
+    patterns = [] if rec_extra else [
         (r"\b(?:on\s+)?the\s+last\s+(?:business\s+day|weekday|working\s+day)\s+of\s+(?:every|each|the)\s+month\b", lambda m: "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1"),
         (r"\b(?:on\s+)?the\s+first\s+(?:business\s+day|weekday|working\s+day)\s+of\s+(?:every|each|the)\s+month\b", lambda m: "FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1"),
         (rf"\b(?:on\s+)?the\s+(first|second|third|fourth|last)\s+{WD}\s+of\s+(?:every|each|the)\s+month\b", lambda m: "FREQ=MONTHLY;BYDAY=" + {"first": "1", "second": "2", "third": "3", "fourth": "4", "last": "-1"}[m.group(1).lower()] + RRULE_DAY[_weekday_index(m.group(2))]),
@@ -232,6 +240,9 @@ def parse(text: str, now: datetime) -> QuickAddResult:
             rule = build(m)
             rec_text = m.group(0).strip()
             s = s[: m.start()] + " " + s[m.end():]
+            if re.search(r"business|working", rec_text, re.I):
+                # Weekends are already excluded by the rule; this also steps around holidays.
+                rec_extra = {"adjust": "previous" if re.search(r"\blast\b", rec_text, re.I) else "next"}
             break
     if sessions and sessions[1] in ("a week", "per week", "each week", "every week") and not rule:
         rule = "FREQ=WEEKLY"
@@ -276,6 +287,9 @@ def parse(text: str, now: datetime) -> QuickAddResult:
             r.can_split = True
             r.min_session_min = r.min_session_min or 30
 
+    if rec_extra.get("kind") == "after_completion":
+        r.recurrence = {**rec_extra, "text": rec_text}
+        r.understood.append(f"repeats: {rec_text}")
     if rule:
         first = None
         try:
@@ -283,7 +297,7 @@ def parse(text: str, now: datetime) -> QuickAddResult:
             first = rrulestr(f"RRULE:{rule}", dtstart=start).after(start - timedelta(seconds=1), inc=True)
         except Exception:
             pass
-        r.recurrence = {"rrule": rule, "text": rec_text, "kind": "fixed"}
+        r.recurrence = {"rrule": rule, "text": rec_text, "kind": "fixed", **rec_extra}
         if first and r.deadline is None:
             r.deadline = first
             r.deadline_type = "hard"
