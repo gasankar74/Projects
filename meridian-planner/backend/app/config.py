@@ -21,12 +21,18 @@ class Settings(BaseSettings):
     google_auth_url: str = "https://accounts.google.com/o/oauth2/v2/auth"
     google_token_url: str = "https://oauth2.googleapis.com/token"
     google_userinfo_url: str = "https://openidconnect.googleapis.com/v1/userinfo"
+    google_revoke_url: str = "https://oauth2.googleapis.com/revoke"
     google_calendar_api: str = "https://www.googleapis.com/calendar/v3"
 
     frontend_url: str = "http://localhost:3000"
     session_cookie_name: str = "meridian_session"
     session_days: int = 30
     cookie_secure: bool = False
+
+    # Comma-separated Google addresses allowed to sign in (e.g. "you@gmail.com,you@firm.com"). Empty means anyone
+    # with a Google account can create an account: fine on a private network, required in production.
+    # Extra Google accounts connected from Settings by a signed-in user can sign in too.
+    allowed_emails: str = ""
 
     # Lets you sign in with just an email on a local machine, without Google. Never enable in production.
     dev_login_enabled: bool = False
@@ -51,6 +57,33 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     claude_model: str = "claude-opus-5-5"
     ai_timeout_s: float = 120.0
+
+    # "development" or "production". Production refuses to start with unsafe settings (dev login, insecure cookies).
+    env: str = "development"
+    # "text" for people, "json" for log collectors.
+    log_format: str = "text"
+    # Per-user and per-address request limits (see app/ratelimit.py).
+    rate_limits_enabled: bool = True
+    # Largest request body accepted, in bytes (CSV imports are the biggest).
+    max_body_bytes: int = 6_000_000
+
+    # Email (notifications and the daily digest). Gmail: smtp.gmail.com, port 587, an app password.
+    # email_backend: "smtp", "file" (writes .eml files to mail_dir, for testing), "log" or "none".
+    # Empty means "smtp" when smtp_host is set, otherwise "none".
+    email_backend: str = ""
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_starttls: bool = True
+    email_from: str = ""
+    mail_dir: str = "/tmp/meridian-mail"
+
+    # Browser push (Web Push with VAPID). Generate a pair with `python -m app.cli vapid`. Push needs HTTPS
+    # (a Tailscale ts.net address works) or localhost.
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+    vapid_subject: str = "mailto:admin@localhost"
 
 
 @lru_cache

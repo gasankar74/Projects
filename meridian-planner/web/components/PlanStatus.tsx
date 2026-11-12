@@ -24,7 +24,10 @@ const ORDER = ["cannot_meet_deadline", "locked_conflict", "at_risk", "will_miss_
 /** Plan freshness, replan/undo, and the scheduler's warnings (deadline risk, overload and what to defer). */
 export function PlanStatus() {
   const { openTask } = useApp();
-  const { data, reload, setData } = useApi<Schedule>("/schedule?start=" + encodeURIComponent(new Date().toISOString()) + "&end=" + encodeURIComponent(new Date(Date.now() + 86400000).toISOString()));
+  // Fixed when the panel mounts: a path computed on every render (new Date()) changed every millisecond and made
+  // useApi refetch in a loop.
+  const [path] = useState(() => "/schedule?start=" + encodeURIComponent(new Date().toISOString()) + "&end=" + encodeURIComponent(new Date(Date.now() + 86400000).toISOString()));
+  const { data, reload, setData } = useApi<Schedule>(path);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState(false);

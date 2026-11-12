@@ -251,6 +251,7 @@ class Task(TimestampMixin, Base):
     __tablename__ = "tasks"
     __table_args__ = (
         Index("ix_tasks_user_status", "user_id", "status"),
+        Index("ix_tasks_user_external_ref", "user_id", "external_ref", postgresql_where=text("external_ref IS NOT NULL")),
         # One task per series per due date: generation is idempotent even if two workers race.
         UniqueConstraint("series_id", "occurrence_due", name="uq_tasks_series_occurrence"),
     )
@@ -312,6 +313,9 @@ class Task(TimestampMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     source: Mapped[str] = mapped_column(String(32), default="app")  # app | quick_add | import | ai
+    # Where an imported task came from ("motion:<id>" or "csv:<row hash>"), so importing the same file twice
+    # doesn't duplicate it.
+    external_ref: Mapped[str | None] = mapped_column(String(200))
 
     checklist: Mapped[list["ChecklistItem"]] = relationship(
         cascade="all, delete-orphan", order_by="ChecklistItem.position"
@@ -554,3 +558,74 @@ class AiAction(Base):
     result: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# -- Phase 5: notifications, imports, app state -------------------------------------------------------------------
+
+
+class Notification(Base):
+    """Something the user should know about. Always shown in the app; also sent by browser push or email
+    depending on the user's settings. dedupe_key makes generation idempotent (one per deadline, per outage...)."""
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        UniqueConstraint("user_id", "dedupe_key", name="uq_notifications_dedupe"),
+        Index("ix_notifications_user_created", "user_id", "created_at"),
+    )
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    kind: Mapped[str] = mapped_column(String(40))
+    title: Mapped[str] = mapped_column(String(300))
+    body: Mapped[str] = mapped_column(Text, default="")
+    link: Mapped[str | None] = mapped_column(String(400))
+    task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"))
+    data: Mapped[dict] = mapped_column(JSONB, default=dict)
+    dedupe_key: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Channel -> outcome, e.g. {"push": "sent", "email": "quiet_hours"}. Empty until delivery has been decided.
+    channels: Mapped[dict] = mapped_column(JSONB, default=dict)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PushSubscription(Base):
+    """A browser's Web Push subscription (one per browser/device)."""
+
+    __tablename__ = "push_subscriptions"
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    endpoint: Mapped[str] = mapped_column(Text, unique=True)
+    p256dh: Mapped[str] = mapped_column(String(200))
+    auth: Mapped[str] = mapped_column(String(100))
+    user_agent: Mapped[str] = mapped_column(String(400), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_ok_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failures: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ImportJob(TimestampMixin, Base):
+    """A CSV import (Motion or generic) waiting for review, then applied or cancelled.
+    `raw` holds the uploaded text only until the import is applied or cancelled."""
+
+    __tablename__ = "imports"
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(32), default="motion_csv")
+    filename: Mapped[str] = mapped_column(String(300), default="")
+    status: Mapped[str] = mapped_column(String(16), default="review")  # review | applied | cancelled
+    raw: Mapped[str | None] = mapped_column(Text)
+    mapping: Mapped[dict] = mapped_column(JSONB, default=dict)
+    options: Mapped[dict] = mapped_column(JSONB, default=dict)
+    # Per-row decisions the user made in the review screen: {"<row index>": "import" | "skip"}.
+    decisions: Mapped[dict] = mapped_column(JSONB, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSONB)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AppState(Base):
+    """Small key-value store for process state that must survive restarts (worker heartbeat, last digest...)."""
+
+    __tablename__ = "app_state"
+    key: Mapped[str] = mapped_column(String(200), primary_key=True)
+    value: Mapped[dict] = mapped_column(JSONB, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

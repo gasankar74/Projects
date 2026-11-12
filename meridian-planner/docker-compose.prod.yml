@@ -1,0 +1,69 @@
+# Production on your own server (Cerybros). Use together with docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Differences from local development:
+# - every service restarts on failure and after a reboot, and has a health check;
+# - by default nothing is reachable from the network: the web app listens on 127.0.0.1:3000 and Tailscale serves
+#   it over HTTPS. Behind a reverse proxy on another container or machine (e.g. Nginx Proxy Manager), set
+#   MERIDIAN_WEB_BIND to the server's LAN address in the top-level .env (and MERIDIAN_WEB_PORT if 3000 is taken);
+#   Postgres isn't published at all;
+# - the database password comes from MERIDIAN_DB_PASSWORD in a top-level .env file;
+# - production checks are on (the API refuses to start with dev login or insecure cookies), logs are JSON and
+#   Docker rotates them.
+# See docs/deployment.md.
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "5" }
+
+x-app-env: &app-env
+  MERIDIAN_DATABASE_URL: postgresql+psycopg://meridian:${MERIDIAN_DB_PASSWORD}@db:5432/meridian
+  MERIDIAN_ENV: production
+  MERIDIAN_LOG_FORMAT: json
+  MERIDIAN_DEV_LOGIN_ENABLED: "false"
+  MERIDIAN_COOKIE_SECURE: "true"
+  MERIDIAN_OLLAMA_URL: ${MERIDIAN_OLLAMA_URL:-http://host.docker.internal:11434}
+
+services:
+  db:
+    restart: unless-stopped
+    ports: !reset []
+    environment:
+      POSTGRES_PASSWORD: ${MERIDIAN_DB_PASSWORD:?set MERIDIAN_DB_PASSWORD in .env next to this file}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meridian -d meridian"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  api:
+    restart: unless-stopped
+    ports: !override ["127.0.0.1:8000:8000"]
+    environment: *app-env
+    depends_on:
+      db: { condition: service_healthy }
+    logging: *logging
+
+  worker:
+    restart: unless-stopped
+    environment: *app-env
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    healthcheck:
+      # The worker touches this file on every loop (about every 2 seconds).
+      test: ["CMD", "python", "-c", "import os,sys,time; sys.exit(0 if time.time() - os.path.getmtime('/tmp/meridian-worker-alive') < 120 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      api: { condition: service_healthy }
+    logging: *logging
+
+  web:
+    restart: unless-stopped
+    ports: !override ["${MERIDIAN_WEB_BIND:-127.0.0.1}:${MERIDIAN_WEB_PORT:-3000}:3000"]
+    depends_on:
+      api: { condition: service_healthy }
+    logging: *logging

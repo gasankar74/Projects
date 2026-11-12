@@ -87,6 +87,11 @@ class FakeGoogle:
                 if rt in self.revoked or rt not in self.refresh_tokens:
                     return self._json(400, {"error": "invalid_grant"})
                 return self._json(200, {"access_token": f"at:{self.refresh_tokens[rt]}", "expires_in": 3600})
+        if url.netloc == "oauth2.googleapis.com" and path == "/revoke":
+            tok = parse_qs(request.content.decode()).get("token", [""])[0]
+            self.revoked.add(tok)
+            self.revoked_tokens = getattr(self, "revoked_tokens", []) + [tok]
+            return self._json(200, {})
         if url.netloc == "openidconnect.googleapis.com":
             sub = self._sub_for(request)
             ident = next(i for i in self.identities.values() if i["sub"] == sub)

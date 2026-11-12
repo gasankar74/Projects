@@ -4,7 +4,7 @@ An auto-scheduling task manager: you enter tasks, deadlines, priorities and dura
 
 The full plan (requirements, Motion comparison, architecture, schema, scheduling algorithm, Google Calendar plan, milestones, testing, deployment, costs) is in the project's planning doc.
 
-## Status: Phase 4 (assistant and projects)
+## Status: Phase 5 (all phases built)
 
 | Area | What works now |
 | --- | --- |
@@ -27,9 +27,13 @@ The full plan (requirements, Motion comparison, architecture, schema, scheduling
 | Projects | Areas, projects with start dates and deadlines, project pages with a Kanban board (drag to change status and order), a timeline (Gantt) with dependency arrows, milestones and deadlines, and a list. AI breakdown turns a goal into estimated tasks with dependencies, previewed before saving. Templates: save any project as one, three starters (talk, mediation, paper), deadlines counted from the project start. |
 | Focus and time | Today page with a daily Top 3 (suggested, or your pick) and the week ahead. Start/stop timer from any task, manual time entries, focus sessions (25/50/90 min). Stopping a timer reduces the remaining time, so the scheduler plans only what's left. |
 | Reports | Weekly dashboard, workload by day against working time (by category or project), time by category, project, day and task, CSV export, and estimate accuracy per category. "Plan with learned estimates" (off by default) scales new estimates by each category's median actual/estimate once it has 5 finished tasks (0.5×–2×). |
+| Import from Motion or a CSV | Upload a Motion CSV export (or any task CSV); columns are matched automatically and can be changed. A review screen shows every row with its parsed deadline, duration, priority and project, flags duplicates (already imported, same title and deadline as an existing task, repeated in the file), completed tasks and errors, and lets you untick rows. Importing the same file again adds nothing. Projects are created as needed. |
+| Notifications | Bell in the app, browser push (Web Push, works on a phone through your Tailscale address) and optional email through Gmail. Alerts for a missed hard deadline, a deadline at risk, an overloaded day, calendar sync failing for 30 minutes or needing reconnection, and optionally 5 minutes before a block starts. Quiet hours, an hourly cap, email only for urgent alerts (throttled), and an optional daily digest. Confidential tasks are never named outside the app. |
+| Security | Rate limits, cross-site request checks, a 6 MB request cap, security headers (CSP, no framing), non-root containers, and a production mode that refuses unsafe settings. Activity page with every sign-in, settings change and task change, signed-in sessions you can end. Deleting your account also removes Meridian's blocks from Google Calendar and revokes its Google access. See [docs/security-review.md](docs/security-review.md). |
+| Running it | `docker-compose.prod.yml` for your own server, encrypted nightly backups, restore and a monthly restore drill. Runbook: [docs/deployment.md](docs/deployment.md). |
 | Data ownership | JSON and CSV export, JSON import with duplicate detection, account deletion. OAuth tokens encrypted at rest (Fernet, rotatable keys). No secrets in the browser bundle. |
 
-Not yet (Phase 5): Motion import, notifications and hardening.
+Not built: team features (single user by design) and a native mobile app (the web app installs on a phone).
 
 Keyboard: **Q** quick add · **A** assistant · **/** search · **T** today · **D / W / M** day, week, month · **← →** previous/next · **G** planner.
 
@@ -96,10 +100,11 @@ Under Docker Compose the API reaches Ollama on the host at `host.docker.internal
 
 ```bash
 cd backend && python -m pytest -q        # needs the meridian_test database
+cd backend && python -m pytest -q -m acceptance   # just the brief's 15 acceptance tests
 cd web && npx tsc --noEmit && npm run build
 ```
 
-Covered now: acceptance tests 1 (task placed before its deadline), 2 (a new meeting moves the task, not the meeting), 3 (urgent work displaces lower priority), 5 (impossible hard deadline alerts, never placed late), 6 (dependencies respected), 7 (partial completion schedules only the remaining time), 10 (locked blocks kept), 12 (overload detected with a deferral suggestion), 14 (complete → history), 8 (overlapping events across calendars and accounts merge into one busy span), 9 (sync failure, retry and token-expiry recovery without duplicates), 13 (events in other zones and across DST stored as correct instants), plus read-only calendar protection, user isolation, dependency loops, export/import de-duplication, OAuth state checking, and the quick-add examples from the brief. 13 is also checked end to end through the scheduler. Phase 3 adds 4 (completing a repeating task generates the next one), 9 on the write side (a lost response and a retry never duplicate an event; reconciliation removes duplicates) and 11 (last business day, with weekends and holidays). Phase 4 adds 15 (the assistant reschedules a task; after Confirm the change is in the database, the plan and the Google Calendar event), plus the confirmation rules, privacy masking, project templates and breakdowns, and time tracking.
+Covered now: acceptance tests 1 (task placed before its deadline), 2 (a new meeting moves the task, not the meeting), 3 (urgent work displaces lower priority), 5 (impossible hard deadline alerts, never placed late), 6 (dependencies respected), 7 (partial completion schedules only the remaining time), 10 (locked blocks kept), 12 (overload detected with a deferral suggestion), 14 (complete → history), 8 (overlapping events across calendars and accounts merge into one busy span), 9 (sync failure, retry and token-expiry recovery without duplicates), 13 (events in other zones and across DST stored as correct instants), plus read-only calendar protection, user isolation, dependency loops, export/import de-duplication, OAuth state checking, and the quick-add examples from the brief. 13 is also checked end to end through the scheduler. Phase 3 adds 4 (completing a repeating task generates the next one), 9 on the write side (a lost response and a retry never duplicate an event; reconciliation removes duplicates) and 11 (last business day, with weekends and holidays). Phase 4 adds 15 (the assistant reschedules a task; after Confirm the change is in the database, the plan and the Google Calendar event), plus the confirmation rules, privacy masking, project templates and breakdowns, and time tracking. Phase 5 adds Motion/CSV import with duplicate detection, notifications and their throttling, the security fixes, and a performance test (500 tasks in an overloaded six weeks re-plan in under 5 seconds; about 1.3 s now).
 
 ## Layout
 

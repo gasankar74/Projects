@@ -403,3 +403,100 @@ export const STATUS_LABEL: Record<Status, string> = {
   done: "Done",
   cancelled: "Cancelled",
 };
+
+// -- Phase 5 ------------------------------------------------------------------------------------------------------
+
+export interface AppNotification {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  link: string | null;
+  task_id: string | null;
+  created_at: string;
+  read_at: string | null;
+  channels: Record<string, string>;
+}
+
+export interface NotifyPrefs {
+  push: boolean;
+  email_alerts: boolean;
+  email_digest: boolean;
+  digest_hour: number;
+  quiet_start: string;
+  quiet_end: string;
+  push_per_hour: number;
+  email_to: string;
+  kinds: Record<string, boolean>;
+}
+
+export interface NotifySettings {
+  prefs: NotifyPrefs;
+  kinds: Record<string, string>;
+  email: { enabled: boolean; to: string };
+  push: { enabled: boolean; public_key: string | null; subscriptions: number };
+}
+
+export type ImportRowState = "new" | "duplicate" | "duplicate_in_file" | "already_imported" | "completed" | "error";
+
+export interface ImportRow {
+  index: number;
+  state: ImportRowState;
+  action: "import" | "skip";
+  error: string | null;
+  warnings: string[];
+  duplicate_of: { id?: string; title?: string; deleted?: boolean; row?: number } | null;
+  fields: {
+    title?: string;
+    description?: string;
+    status?: string;
+    priority?: string;
+    deadline?: string | null;
+    deadline_type?: string;
+    duration_min?: number;
+    earliest_start?: string | null;
+    project?: string;
+    category?: string;
+    tags?: string[];
+    completed_at?: string | null;
+    external_id?: string;
+  };
+  notes: string[];
+}
+
+export interface ImportJob {
+  id: string;
+  source: string;
+  filename: string;
+  status: "review" | "applied" | "cancelled";
+  created_at: string;
+  applied_at: string | null;
+  options: { include_completed: boolean; default_duration: number; deadline_type: "hard" | "soft"; date_order: "mdy" | "dmy"; create_categories: boolean };
+  result: { created: number; skipped: number; projects_created: string[]; categories_created: string[] } | null;
+  targets: { key: string; label: string }[];
+  header?: string[];
+  samples?: Record<string, string>;
+  mapping?: Record<string, string>;
+  summary?: { rows: number; to_import: number; new: number; duplicates: number; already_imported: number; completed: number; errors: number; new_projects: string[]; unknown_categories: string[] };
+  rows?: ImportRow[];
+}
+
+export interface ActivityItem {
+  id: string;
+  at: string;
+  source: "account" | "task";
+  actor: string;
+  action: string;
+  label: string;
+  detail: Record<string, unknown>;
+  task_id: string | null;
+  task_title: string | null;
+}
+
+export interface SessionInfo {
+  id: string;
+  created_at: string;
+  expires_at: string;
+  user_agent: string;
+  current: boolean;
+}

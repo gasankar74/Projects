@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, Suspense, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { api, bus, useApi } from "@/lib/api";
 import type { Category, GoogleAccount, Project, User } from "@/lib/types";
+import { NotificationBell } from "./Notifications";
 import { QuickAdd } from "./QuickAdd";
 import { TaskDrawer } from "./TaskDrawer";
 import { TimerBar, useRunningEntry } from "./Timer";
@@ -154,6 +155,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         <NavLink href="/tasks?view=overdue" label="Overdue" count={overdue?.total} active={view === "overdue"} />
         <NavLink href="/tasks?view=history" label="Completed" active={view === "history"} />
         <NavLink href="/settings" label="Calendars & settings" active={path.startsWith("/settings")} />
+        <NavLink href="/activity" label="Activity log" active={path === "/activity"} />
       </div>
       <div>
         <div className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-stone-400">Categories</div>
@@ -193,6 +195,13 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   const [navOpen, setNavOpen] = useState(false);
   const { entry: running } = useRunningEntry();
   const searchRef = useRef<HTMLInputElement>(null);
+  const sp = useSearchParams();
+
+  // Links from notifications (push, email, the bell) open a task with ?task=<id>.
+  const linkedTask = sp.get("task");
+  useEffect(() => {
+    if (linkedTask) setTaskId(linkedTask);
+  }, [linkedTask]);
 
   const reloadMeta = useCallback(() => {
     reloadCats();
@@ -271,6 +280,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
                 ✦ Ask
               </Link>
               <SyncStatus />
+              <NotificationBell openTask={setTaskId} />
               <ThemeToggle />
               <button
                 className="rounded-md px-2 py-1 text-xs text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800"
