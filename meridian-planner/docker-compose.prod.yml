@@ -6,7 +6,8 @@
 # - every service restarts on failure and after a reboot, and has a health check;
 # - by default nothing is reachable from the network: the web app listens on 127.0.0.1:3000 and Tailscale serves
 #   it over HTTPS. Behind a reverse proxy on another container or machine (e.g. Nginx Proxy Manager), set
-#   MERIDIAN_WEB_BIND to the server's LAN address in the top-level .env (and MERIDIAN_WEB_PORT if 3000 is taken);
+#   MERIDIAN_WEB_BIND to the server's LAN address in the top-level .env (and MERIDIAN_WEB_PORT if 3000 is taken;
+#   MERIDIAN_API_PORT moves the API's local-only port if 8000 is taken);
 #   Postgres isn't published at all;
 # - the database password comes from MERIDIAN_DB_PASSWORD in a top-level .env file;
 # - production checks are on (the API refuses to start with dev login or insecure cookies), logs are JSON and
@@ -40,7 +41,7 @@ services:
 
   api:
     restart: unless-stopped
-    ports: !override ["127.0.0.1:8000:8000"]
+    ports: !override ["127.0.0.1:${MERIDIAN_API_PORT:-8000}:8000"]
     environment: *app-env
     depends_on:
       db: { condition: service_healthy }
