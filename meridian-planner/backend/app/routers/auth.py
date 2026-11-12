@@ -1,5 +1,7 @@
+import logging
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -12,10 +14,12 @@ from ..config import get_settings
 from ..db import get_db
 from ..models import AuditLog, GoogleAccount, User
 from ..schemas import UserOut, UserUpdate
-from ..security import create_session, current_user, destroy_session, encrypt, sign_state, verify_state
+from ..security import create_session, current_user, destroy_session, email_allowed, encrypt, sign_state, verify_state
 from ..services import google as g
 from ..services.accounts import get_or_create_user
 from ..services.calendar_sync import sync_account
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 PKCE_COOKIE = "meridian_pkce"
@@ -76,12 +80,22 @@ def google_callback(
     if data["mode"] == "connect" and signed_in:
         user = signed_in
     else:
+        if not sign_in_allowed(db, email, sub):
+            log.warning("Refused Google sign-in for an address not on MERIDIAN_ALLOWED_EMAILS")
+            msg = quote("That Google account isn't allowed to sign in to this Meridian server.")
+            resp = RedirectResponse(f"{s.frontend_url}/login?error={msg}")
+            resp.delete_cookie(PKCE_COOKIE, path="/")
+            return resp
         tz = data.get("tz")
         try:
             ZoneInfo(tz) if tz else None
         except Exception:
             tz = None
-        user, _ = get_or_create_user(db, email, info.get("name", ""), google_sub=sub, tz=tz)
+        # A Google account connected from Settings signs in to the user who connected it.
+        owner = db.scalar(select(GoogleAccount.user_id).where(GoogleAccount.google_sub == sub).limit(1))
+        user = db.get(User, owner) if owner else None
+        if user is None:
+            user, _ = get_or_create_user(db, email, info.get("name", ""), google_sub=sub, tz=tz)
 
     acct = db.scalar(select(GoogleAccount).where(GoogleAccount.user_id == user.id, GoogleAccount.google_sub == sub))
     if acct is None:
@@ -105,7 +119,17 @@ def google_callback(
     resp.delete_cookie(PKCE_COOKIE, path="/")
     if not signed_in or data["mode"] != "connect":
         create_session(db, user, resp, request.headers.get("user-agent", ""))
+        db.add(AuditLog(user_id=user.id, action="signed_in", detail={"method": "google", "user_agent": request.headers.get("user-agent", "")[:200]}))
+        db.commit()
     return resp
+
+
+def sign_in_allowed(db: Session, email: str, sub: str) -> bool:
+    """With MERIDIAN_ALLOWED_EMAILS set: listed addresses, or a Google account that a listed user connected in Settings."""
+    if email_allowed(email):
+        return True
+    owner = db.scalar(select(User).join(GoogleAccount, GoogleAccount.user_id == User.id).where(GoogleAccount.google_sub == sub).limit(1))
+    return owner is not None and email_allowed(owner.email)
 
 
 class DevLogin(BaseModel):
@@ -133,6 +157,10 @@ def auth_config():
 
 @router.post("/logout", status_code=204)
 def logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    user = _user_or_none(request, db)
+    if user:
+        db.add(AuditLog(user_id=user.id, action="signed_out"))
+        db.commit()
     destroy_session(db, request, response)
     response.status_code = 204
     return response
@@ -147,6 +175,12 @@ def me(user: User = Depends(current_user)):
 def update_me(body: UserUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)):
     for k, v in body.model_dump(exclude_unset=True).items():
         if v is not None:
+            if k == "timezone" and v != user.timezone:
+                user.schedule_dirty_at = datetime.now(timezone.utc)
+                user.schedule_dirty_reason = f"time zone changed to {v}"
             setattr(user, k, v)
+    changed = sorted(k for k, v in body.model_dump(exclude_unset=True).items() if v is not None)
+    if changed:
+        db.add(AuditLog(user_id=user.id, action="profile_updated", detail={"changed": changed, **({"ai_opt_in": user.ai_opt_in} if "ai_opt_in" in changed else {})}))
     db.commit()
     return user

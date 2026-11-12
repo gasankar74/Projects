@@ -86,7 +86,20 @@ def current_user(request: Request, db: Session = Depends(get_db)) -> User:
     user = db.get(User, sess.user_id)
     if not user:
         raise HTTPException(401, "Not signed in")
+    if not email_allowed(user.email):
+        # Taken off MERIDIAN_ALLOWED_EMAILS: existing sessions stop working too.
+        raise HTTPException(401, "This account is no longer allowed on this server")
     return user
+
+
+def allowed_emails() -> set[str]:
+    return {e.strip().lower() for e in get_settings().allowed_emails.split(",") if e.strip()}
+
+
+def email_allowed(email: str | None) -> bool:
+    """True when no allow-list is set, or the address is on it."""
+    allowed = allowed_emails()
+    return not allowed or (email or "").lower() in allowed
 
 
 # ---------- signed OAuth state ----------

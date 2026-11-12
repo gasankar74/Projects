@@ -1,6 +1,7 @@
 """Export, import (JSON round-trip) and account deletion."""
 
 import csv
+import logging
 import io
 import json
 from datetime import datetime, timezone
@@ -16,6 +17,9 @@ from ..models import AuditLog, Category, ChecklistItem, Project, Task, TaskDepen
 from ..schemas import CategoryOut, ProjectOut, TaskCreate
 from ..security import current_user, destroy_session
 from ..services import tasks as svc
+from ..services.accounts import remove_google_footprint
+from ..services.google import GoogleClient
+from .auth import google_client
 
 router = APIRouter(tags=["data"])
 
@@ -143,13 +147,19 @@ async def import_json(request: Request, user: User = Depends(current_user), db: 
 
 class DeleteAccount(BaseModel):
     confirm_email: str
+    # Remove the task blocks Meridian wrote to Google Calendar, and revoke its Google access.
+    clean_google: bool = True
 
 
 @router.post("/account/delete", status_code=204)
-def delete_account(body: DeleteAccount, request: Request, response: Response, user: User = Depends(current_user), db: Session = Depends(get_db)):
+def delete_account(body: DeleteAccount, request: Request, response: Response, user: User = Depends(current_user), db: Session = Depends(get_db),
+                   client: GoogleClient = Depends(google_client)):
     """Permanently deletes the account and all its data. Requires typing the account email."""
     if body.confirm_email.strip().lower() != user.email:
         raise HTTPException(422, "Email does not match")
+    if body.clean_google:
+        result = remove_google_footprint(db, user, client)
+        logging.getLogger("meridian.accounts").info("account deleted: %s", result)
     destroy_session(db, request, response)
     db.delete(user)
     db.commit()

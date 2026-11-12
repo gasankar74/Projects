@@ -100,6 +100,14 @@ class GoogleClient:
             raise GoogleError(r.status_code, r.text)
         return r.json()
 
+    def revoke(self, token: str) -> bool:
+        """Revoke a refresh (or access) token so Google forgets this app's access. Best effort."""
+        try:
+            r = self.http.post(self.s.google_revoke_url, data={"token": token})
+            return r.status_code == 200
+        except httpx.HTTPError:
+            return False
+
     def userinfo(self, access_token: str) -> dict:
         r = self.http.get(self.s.google_userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
         if r.status_code != 200:
@@ -133,6 +141,70 @@ class GoogleClient:
             page = data.get("nextPageToken")
             if not page:
                 return items
+
+    # ----- writing (task blocks) -----
+
+    def _send(self, method: str, access_token: str, path: str, json: dict | None = None, params: dict | None = None) -> httpx.Response:
+        return self.http.request(
+            method,
+            f"{self.s.google_calendar_api}{path}",
+            json=json,
+            params=params or {},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+
+    @staticmethod
+    def _cal_path(calendar_id: str) -> str:
+        from urllib.parse import quote
+
+        return f"/calendars/{quote(calendar_id, safe='')}"
+
+    def insert_event(self, access_token: str, calendar_id: str, body: dict) -> dict:
+        r = self._send("POST", access_token, f"{self._cal_path(calendar_id)}/events", json=body, params={"sendUpdates": "none"})
+        if r.status_code not in (200, 201):
+            raise GoogleError(r.status_code, r.text[:500])
+        return r.json()
+
+    def patch_event(self, access_token: str, calendar_id: str, event_id: str, body: dict) -> dict:
+        r = self._send("PATCH", access_token, f"{self._cal_path(calendar_id)}/events/{event_id}", json=body, params={"sendUpdates": "none"})
+        if r.status_code != 200:
+            raise GoogleError(r.status_code, r.text[:500])
+        return r.json()
+
+    def delete_event(self, access_token: str, calendar_id: str, event_id: str) -> None:
+        r = self._send("DELETE", access_token, f"{self._cal_path(calendar_id)}/events/{event_id}", params={"sendUpdates": "none"})
+        if r.status_code not in (200, 204, 404, 410):
+            raise GoogleError(r.status_code, r.text[:500])
+
+    def list_tagged_events(self, access_token: str, calendar_id: str, prop: str, time_min: datetime, time_max: datetime) -> list[dict]:
+        """Events carrying our private extended property (for reconciliation)."""
+        items, page = [], None
+        while True:
+            params: dict = {
+                "privateExtendedProperty": prop, "timeMin": time_min.isoformat(), "timeMax": time_max.isoformat(),
+                "singleEvents": "true", "showDeleted": "false", "maxResults": 2500,
+            }
+            if page:
+                params["pageToken"] = page
+            data = self._get(access_token, f"{self._cal_path(calendar_id)}/events", params)
+            items += data.get("items", [])
+            page = data.get("nextPageToken")
+            if not page:
+                return items
+
+    # ----- push notifications -----
+
+    def watch_events(self, access_token: str, calendar_id: str, channel_id: str, address: str, token: str, ttl_s: int) -> dict:
+        body = {"id": channel_id, "type": "web_hook", "address": address, "token": token, "params": {"ttl": str(ttl_s)}}
+        r = self._send("POST", access_token, f"{self._cal_path(calendar_id)}/events/watch", json=body)
+        if r.status_code != 200:
+            raise GoogleError(r.status_code, r.text[:500])
+        return r.json()
+
+    def stop_channel(self, access_token: str, channel_id: str, resource_id: str) -> None:
+        r = self._send("POST", access_token, "/channels/stop", json={"id": channel_id, "resourceId": resource_id})
+        if r.status_code not in (200, 204, 404):
+            raise GoogleError(r.status_code, r.text[:500])
 
     def list_events(self, access_token: str, calendar_id: str, sync_token: str | None) -> tuple[list[dict], str | None]:
         """Return (events, next_sync_token). Full sync when sync_token is None, else incremental."""

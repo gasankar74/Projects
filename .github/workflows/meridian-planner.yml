@@ -27,6 +27,10 @@ jobs:
           python-version: "3.13"
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
+      - name: Acceptance regression (the brief's tests 1-15)
+        run: python -m pytest -q -m acceptance
+      - name: Deploy scripts parse
+        run: bash -n ../deploy/*.sh
       - name: Migrations apply cleanly
         env:
           MERIDIAN_DATABASE_URL: postgresql+psycopg://meridian:meridian@localhost:5432/meridian_test

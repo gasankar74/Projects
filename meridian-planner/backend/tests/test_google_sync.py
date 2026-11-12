@@ -99,7 +99,7 @@ def test_incremental_sync_handles_changes_and_cancellations(client, google):
     google.cancel_event(cal, "m2")
     google.put_event(cal, ev("m3", NOW + timedelta(hours=7), NOW + timedelta(hours=8), summary="New"))
     res = client.post("/calendars/sync").json()["results"][0]
-    assert res["ok"] and res["calendars"]["Personal"] == {"created": 1, "updated": 1, "cancelled": 1, "removed": 0, "full": False}
+    assert res["ok"] and res["calendars"]["Personal"] == {"created": 1, "updated": 1, "cancelled": 1, "removed": 0, "full": False, "moved": 0}
     events = client.get("/events", params={"start": iso(NOW), "end": iso(NOW + timedelta(days=1))}).json()
     assert [e["summary"] for e in events] == ["Mediation (moved)", "New"]
 
@@ -200,3 +200,30 @@ def test_oauth_state_is_checked(client, google):
     client.get("/auth/google/login", follow_redirects=False)
     r = client.get("/auth/google/callback?code=code-personal&state=forged.sig", follow_redirects=False)
     assert r.status_code == 400
+
+
+def test_allowed_emails_limits_who_can_sign_in(client, google, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "allowed_emails", " Greg.Personal@example.com ")
+    setup_two_accounts(google)
+    google.add_account("code-stranger", "sub-x", "stranger@example.com")
+    r = oauth(client, "code-stranger")
+    assert "/login?error=" in r.headers["location"] and "allowed" in r.headers["location"]
+    assert client.get("/auth/me").status_code == 401
+    with session_factory()() as db:
+        assert db.scalar(select(func.count()).select_from(GoogleAccount)) == 0
+    # The listed address signs in (case-insensitive) and may connect a second, unlisted account...
+    oauth(client, "code-personal")
+    oauth(client, "code-biz", mode="connect")
+    assert client.get("/auth/me").json()["email"] == "greg.personal@example.com"
+    # ...which can then sign in on its own, into the same user.
+    client.post("/auth/logout")
+    client.cookies.clear()
+    oauth(client, "code-biz")
+    assert client.get("/auth/me").json()["email"] == "greg.personal@example.com"
+    # Taking the main address off the list ends existing sessions and blocks the connected account too.
+    monkeypatch.setattr(get_settings(), "allowed_emails", "someone.else@example.com")
+    assert client.get("/auth/me").status_code == 401
+    client.cookies.clear()
+    r = oauth(client, "code-biz")
+    assert "/login?error=" in r.headers["location"]

@@ -2,6 +2,10 @@
 
   python -m app.cli genkey        print a new token-encryption key
   python -m app.cli sync          sync every connected Google account now (for cron)
+  python -m app.cli worker        run the background worker: debounced replans, calendar sync, hourly refresh
+  python -m app.cli replan EMAIL  replan one user now and print the warnings
+  python -m app.cli vapid         print a new key pair for browser push (MERIDIAN_VAPID_PUBLIC_KEY / PRIVATE_KEY)
+  python -m app.cli digest EMAIL  print the daily digest one user would get now
 """
 
 import sys
@@ -24,6 +28,36 @@ def main() -> None:
         client = GoogleClient()
         for acct in db.scalars(select(GoogleAccount).where(GoogleAccount.status != "needs_reconnect")).all():
             print(sync_account(db, acct, client))
+    elif cmd == "vapid":
+        from .services.webpush import generate_vapid
+
+        pub, priv = generate_vapid()
+        print(f"MERIDIAN_VAPID_PUBLIC_KEY={pub}\nMERIDIAN_VAPID_PRIVATE_KEY={priv}")
+    elif cmd == "digest" and len(sys.argv) > 2:
+        from datetime import datetime, timezone
+
+        from .db import session_factory
+        from .models import User
+        from .services.notify import build_digest
+
+        db = session_factory()()
+        user = db.scalars(select(User).where(User.email == sys.argv[2])).one()
+        print(build_digest(db, user, datetime.now(timezone.utc))["text"])
+    elif cmd == "worker":
+        from .worker import run_forever
+
+        run_forever()
+    elif cmd == "replan" and len(sys.argv) > 2:
+        from .db import session_factory
+        from .models import User
+        from .services.scheduling import replan
+
+        db = session_factory()()
+        user = db.scalars(select(User).where(User.email == sys.argv[2])).one()
+        run, plan = replan(db, user, trigger="cli", force=True)
+        print(f"run {run.id}: {len(run.blocks)} blocks")
+        for w in run.warnings:
+            print("-", w["message"])
     else:
         print(__doc__)
 

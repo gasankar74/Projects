@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { api, bus, useApi } from "@/lib/api";
-import { DAY_NAMES, fmtDeadline, fromLocalInput, toLocalInput } from "@/lib/dates";
-import type { Calendar, Task, TaskEvent } from "@/lib/types";
+import { DAY_NAMES, fmtDeadline, fmtDuration, fromLocalInput, toLocalInput } from "@/lib/dates";
+import type { Block, Calendar, PlanWarning, Profile, Task, TaskEvent, TimeEntry } from "@/lib/types";
 import { PRIORITIES, PRIORITY_LABEL, STATUS_LABEL } from "@/lib/types";
+import { RepeatEditor } from "./RepeatEditor";
 import { useApp } from "./Shell";
 
 type Form = Partial<Task> & { tagsText?: string; linksText?: string };
@@ -23,17 +24,20 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
   const { data: task, reload, setData } = useApi<Task>(`/tasks/${taskId}`);
   const { data: history, reload: reloadHistory } = useApi<TaskEvent[]>(`/tasks/${taskId}/history`);
   const { data: calendars } = useApi<Calendar[]>("/calendars");
+  const { data: profiles } = useApi<Profile[]>("/profiles");
+  const [recTouched, setRecTouched] = useState(false);
   const { data: others } = useApi<{ items: Task[] }>("/tasks?limit=500");
   const [form, setForm] = useState<Form>({});
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newItem, setNewItem] = useState("");
-  const [tab, setTab] = useState<"details" | "history">("details");
+  const [tab, setTab] = useState<"details" | "schedule" | "history">("details");
 
   useEffect(() => {
     if (task) {
       setForm({ ...task, tagsText: task.tags.join(", "), linksText: task.links.map((l) => (l.title ? `${l.title} | ${l.url}` : l.url)).join("\n") });
       setDirty(false);
+      setRecTouched(false);
     }
   }, [task]);
   useEffect(() => {
@@ -101,15 +105,21 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
       buffer_after_min: Number(form.buffer_after_min ?? 0),
       energy: form.energy || null,
       calendar_id: form.calendar_id || null,
+      scheduling_profile_id: form.scheduling_profile_id || null,
+      location: form.location || null,
+      travel_min: Number(form.travel_min ?? 0),
       tags: (form.tagsText ?? "").split(",").map((t) => t.trim()).filter(Boolean),
       links,
       confidential: form.confidential,
       ai_allowed: form.ai_allowed,
+      is_milestone: form.is_milestone,
     };
     // Send only what changed, so the server's rules (e.g. leaving the inbox when filed) see real edits.
     const changed = Object.fromEntries(
       Object.entries(body).filter(([k, v]) => JSON.stringify(v ?? null) !== JSON.stringify((task as unknown as Record<string, unknown>)[k] ?? null)),
     );
+    // The repeat rule is only sent when it was edited: re-sending it would regenerate future occurrences.
+    if (recTouched) changed.recurrence = form.recurrence ? JSON.parse(JSON.stringify(form.recurrence)) : null;
     if (Object.keys(changed).length === 0) return setDirty(false);
     if (await call(`/tasks/${task.id}`, { method: "PATCH", json: changed })) setDirty(false);
   }
@@ -127,9 +137,9 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
             </button>
           )}
           <div className="ml-2 flex gap-1 text-sm">
-            {(["details", "history"] as const).map((t) => (
+            {(["details", "schedule", "history"] as const).map((t) => (
               <button key={t} className={`rounded px-2 py-1 ${tab === t ? "bg-stone-100 font-medium dark:bg-stone-800" : "text-stone-500"}`} onClick={() => setTab(t)}>
-                {t === "details" ? "Details" : "History"}
+                {t === "details" ? "Details" : t === "schedule" ? "Schedule" : "History"}
               </button>
             ))}
           </div>
@@ -139,14 +149,17 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
         </div>
         {!task ? (
           <div className="p-6 text-sm text-stone-500">Loading…</div>
+        ) : tab === "schedule" ? (
+          <WhyTab taskId={task.id} />
         ) : tab === "history" ? (
           <div className="flex-1 overflow-y-auto p-4 text-sm">
+            <TimeLog taskId={taskId} onChange={reload} />
             {(history ?? []).map((h) => (
               <div key={h.id} className="border-b border-stone-100 py-2 dark:border-stone-800">
                 <div className="flex justify-between text-xs text-stone-500">
                   <span className="font-medium capitalize text-stone-700 dark:text-stone-300">{h.action.replace("_", " ")}</span>
                   <span>
-                    {new Date(h.at).toLocaleString()} · {h.actor}
+                    {new Date(h.at).toLocaleString()} · {h.actor === "ai" ? "assistant" : h.actor}
                   </span>
                 </div>
                 {h.action === "updated" && (
@@ -252,6 +265,9 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={!!form.auto_schedule} onChange={(e) => set({ auto_schedule: e.target.checked })} /> Auto-schedule
                 </label>
+                <label className="flex items-center gap-2 text-sm" title="A milestone marks a date on the project timeline (usually with auto-schedule off)">
+                  <input type="checkbox" checked={!!form.is_milestone} onChange={(e) => set({ is_milestone: e.target.checked })} /> Milestone
+                </label>
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={!!form.can_split} onChange={(e) => set({ can_split: e.target.checked })} /> Can be split
                 </label>
@@ -300,6 +316,22 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
                     })}
                   </div>
                 </div>
+                <Field label="Hours (scheduling profile)">
+                  <select className="input" value={form.scheduling_profile_id ?? ""} onChange={(e) => set({ scheduling_profile_id: e.target.value || null })}>
+                    <option value="">Category's or default work hours</option>
+                    {(profiles ?? []).map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Location">
+                  <input className="input" placeholder="e.g. 111 N Hill St" value={form.location ?? ""} onChange={(e) => set({ location: e.target.value })} />
+                </Field>
+                <Field label="Travel each way (min)">
+                  <input type="number" min={0} step={5} className="input" value={form.travel_min ?? 0} onChange={(e) => set({ travel_min: Number(e.target.value) })} />
+                </Field>
                 <Field label="Write blocks to calendar" className="col-span-2 sm:col-span-3">
                   <select className="input" value={form.calendar_id ?? ""} onChange={(e) => set({ calendar_id: e.target.value || null })}>
                     <option value="">Default task calendar</option>
@@ -311,9 +343,21 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
                   </select>
                 </Field>
               </div>
-              {task.recurrence && (
+            </section>
+
+            <section className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-stone-400">Repeat</div>
+              <RepeatEditor
+                value={form.recurrence ?? null}
+                seriesId={task.series_id}
+                onChange={(v) => {
+                  set({ recurrence: v });
+                  setRecTouched(true);
+                }}
+              />
+              {task.occurrence_due && (
                 <div className="mt-2 text-xs text-stone-500">
-                  Repeats: {task.recurrence.text ?? task.recurrence.rrule} <span className="text-stone-400">(series generation arrives in Phase 3)</span>
+                  This occurrence is due {new Date(task.occurrence_due + "T12:00:00").toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}.
                 </div>
               )}
             </section>
@@ -419,6 +463,132 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+interface Why {
+  stats: { score: number; parts: Record<string, number>; status: string; start: string | null; finish: string | null; slack_min: number | null; at_risk: boolean; unscheduled_min: number } | null;
+  blocks: Block[];
+  warnings: PlanWarning[];
+  auto_schedule: boolean;
+  done: boolean;
+}
+
+const PART_LABEL: Record<string, string> = { P: "Priority", U: "Urgency (free time left before the deadline)", C: "Deadline type", B: "Other tasks waiting on it", J: "Project", R: "Progress already made", A: "Narrow allowed hours" };
+
+/** What the scheduler decided for this task, and why. */
+function WhyTab({ taskId }: { taskId: string }) {
+  const { data, reload } = useApi<Why>(`/schedule/tasks/${taskId}/why`);
+  useEffect(() => bus.on("schedule", reload), [reload]);
+  useEffect(() => bus.on("tasks", reload), [reload]);
+  if (!data) return <div className="p-6 text-sm text-stone-500">Loading…</div>;
+  if (data.done) return <div className="p-6 text-sm text-stone-500">This task is finished, so it isn&apos;t scheduled.</div>;
+  if (!data.auto_schedule) return <div className="p-6 text-sm text-stone-500">Automatic scheduling is off for this task. Turn it on in Details to have it planned.</div>;
+  const st = data.stats;
+  return (
+    <div className="flex-1 space-y-4 overflow-y-auto p-4 text-sm">
+      {data.warnings.map((w, i) => (
+        <div key={i} className="rounded-lg border border-orange-200 bg-orange-50 p-2.5 text-xs text-orange-900 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-100">
+          {w.message}
+        </div>
+      ))}
+      {st && (
+        <section>
+          <h3 className="label">Score {st.score} / 100</h3>
+          <ul className="space-y-1">
+            {Object.entries(st.parts).map(([k, v]) => (
+              <li key={k} className="flex items-center gap-2 text-xs">
+                <span className="w-56 text-stone-600 dark:text-stone-300">{PART_LABEL[k] ?? k}</span>
+                <span className="h-1.5 flex-1 rounded bg-stone-100 dark:bg-stone-800">
+                  <span className="block h-1.5 rounded bg-brand-500" style={{ width: `${Math.round(v * 100)}%` }} />
+                </span>
+                <span className="w-9 text-right text-stone-500">{Math.round(v * 100)}%</span>
+              </li>
+            ))}
+          </ul>
+          {st.finish && (
+            <p className="mt-2 text-xs text-stone-500">
+              Planned to finish {new Date(st.finish).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+              {st.slack_min !== null && st.slack_min >= 0 && `, with ${fmtDuration(st.slack_min)} of working time to spare before the deadline`}.
+            </p>
+          )}
+        </section>
+      )}
+      <section>
+        <h3 className="label">Planned sessions</h3>
+        {data.blocks.length === 0 && <p className="text-xs text-stone-500">Nothing scheduled yet.</p>}
+        <ul className="space-y-3">
+          {data.blocks.map((b) => (
+            <li key={b.id} className="rounded-lg border border-stone-200 p-2.5 dark:border-stone-800">
+              <div className="flex items-center gap-2 text-xs font-medium">
+                {new Date(b.start).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} – {new Date(b.end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                {b.locked && <span className="chip bg-stone-200 dark:bg-stone-700">Locked</span>}
+              </div>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-stone-600 dark:text-stone-300">
+                {(b.reason.why ?? []).map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+function TimeLog({ taskId, onChange }: { taskId: string; onChange: () => void }) {
+  const { data: entries, reload } = useApi<TimeEntry[]>(`/time/entries?task_id=${taskId}`);
+  const [min, setMin] = useState("");
+  const [reduce, setReduce] = useState(true);
+  useEffect(() => bus.on("timer", reload), [reload]);
+  const total = (entries ?? []).reduce((a, e) => a + e.minutes, 0);
+  return (
+    <div className="mb-4 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+      <div className="mb-2 flex items-center gap-2 text-xs">
+        <span className="font-semibold tracking-wide text-stone-400 uppercase">Time tracked</span>
+        <span className="ml-auto font-medium tabular-nums">{fmtDuration(total)}</span>
+      </div>
+      <ul className="mb-2 space-y-0.5 text-xs text-stone-500">
+        {(entries ?? []).slice(0, 8).map((e) => (
+          <li key={e.id} className="flex gap-2">
+            <span>{new Date(e.started_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+            <span className="tabular-nums">{e.running ? "running" : fmtDuration(e.minutes)}</span>
+            <span>{e.source === "manual" ? "logged" : e.source}</span>
+            {!e.running && (
+              <button
+                className="ml-auto text-stone-400 hover:text-red-600"
+                onClick={async () => {
+                  await api(`/time/entries/${e.id}`, { method: "DELETE" });
+                  reload();
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      <form
+        className="flex flex-wrap items-center gap-2 text-xs"
+        onSubmit={async (ev) => {
+          ev.preventDefault();
+          const m = Number(min);
+          if (!m) return;
+          await api("/time/entries", { method: "POST", json: { task_id: taskId, started_at: new Date(Date.now() - m * 60000).toISOString(), minutes: m, reduce_remaining: reduce } });
+          setMin("");
+          reload();
+          onChange();
+          bus.emit("tasks");
+        }}
+      >
+        <input className="input !w-24" type="number" min={1} placeholder="Minutes" value={min} onChange={(e) => setMin(e.target.value)} aria-label="Minutes to log" />
+        <label className="flex items-center gap-1">
+          <input type="checkbox" checked={reduce} onChange={(e) => setReduce(e.target.checked)} /> take off the estimate
+        </label>
+        <button className="btn text-xs">Log time</button>
+      </form>
     </div>
   );
 }

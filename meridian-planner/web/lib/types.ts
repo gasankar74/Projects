@@ -16,6 +16,58 @@ export interface Category {
   position: number;
   default_priority: Priority;
   open_count: number;
+  scheduling_profile_id: string | null;
+  ai_access: AiAccess;
+}
+
+export type AiAccess = "default" | "hidden" | "allowed";
+
+export interface Recurrence {
+  kind?: "fixed" | "after_completion";
+  rrule?: string;
+  every?: number;
+  unit?: "days" | "weeks" | "months" | "years";
+  due_time?: string;
+  adjust?: "none" | "previous" | "next";
+  lead_days?: number;
+  until?: string;
+  count?: number;
+  missed?: "keep" | "skip" | "latest_only";
+  text?: string;
+}
+
+export interface Series {
+  id: string;
+  title: string;
+  template: Record<string, unknown>;
+  rule: Recurrence;
+  anchor: string;
+  missed_policy: "keep" | "skip" | "latest_only";
+  generate_ahead_days: number;
+  active: boolean;
+  last_generated_due: string | null;
+  generated_count: number;
+  description: string;
+  upcoming: string[];
+  open_count: number;
+}
+
+export interface Profile {
+  id: string;
+  name: string;
+  color: string | null;
+  work_hours: Record<string, [string, string][]>;
+  daily_cap_min: number | null;
+  position: number;
+}
+
+export interface WriteStatus {
+  calendar_id: string | null;
+  calendar: string | null;
+  synced: number;
+  pending: number;
+  errors: number;
+  last_error: string | null;
 }
 
 export interface Project {
@@ -28,8 +80,132 @@ export interface Project {
   color: string | null;
   client: string | null;
   notes: string | null;
+  area_id: string | null;
+  start_date: string | null;
+  position: number;
+  template_id: string | null;
+  ai_access: AiAccess;
   open_count: number;
   done_count: number;
+  open_min: number;
+  tracked_min: number;
+}
+
+export interface Area {
+  id: string;
+  name: string;
+  position: number;
+}
+
+export interface OutlineItem {
+  title: string;
+  duration_min: number;
+  priority?: Priority;
+  offset_days?: number | null;
+  depends_on: number[];
+  checklist?: string[];
+  is_milestone?: boolean;
+}
+
+export interface Template {
+  id: string;
+  name: string;
+  description: string | null;
+  category_id: string | null;
+  items: OutlineItem[];
+}
+
+export interface Starter {
+  key: string;
+  name: string;
+  description: string;
+  items: OutlineItem[];
+}
+
+export interface TimeEntry {
+  id: string;
+  task_id: string;
+  title: string;
+  started_at: string;
+  ended_at: string | null;
+  minutes: number;
+  source: string;
+  note: string | null;
+  running: boolean;
+  remaining_min?: number;
+  duration_min?: number;
+  tracked_min?: number;
+}
+
+export interface Top3Item {
+  task_id: string;
+  title: string;
+  priority: Priority;
+  deadline: string | null;
+  status: Status;
+  done: boolean;
+  start: string | null;
+  at_risk: boolean;
+  why: string;
+}
+
+export interface Top3 {
+  day: string;
+  source: "you" | "suggested";
+  items: Top3Item[];
+}
+
+export interface AiChange {
+  op: string;
+  task_id?: string;
+  title?: string;
+  status?: string;
+  fields?: Record<string, unknown>;
+  start?: string | null;
+  end?: string | null;
+  deleted?: boolean;
+}
+
+export interface AiMessage {
+  id: string;
+  seq: number;
+  role: "user" | "assistant" | "tool" | "note";
+  content: string;
+  tools?: string[];
+  tool?: string;
+  changes: AiChange[];
+  action_id: string | null;
+  created_at: string;
+}
+
+export interface AiAction {
+  id: string;
+  summary: string;
+  status: "pending" | "confirmed" | "cancelled" | "failed";
+  preview: {
+    items: { op: string; task_id: string | null; title: string; fields: Record<string, unknown> }[];
+    moves: { task_id: string; title: string; from: string | null; to: string | null; day_changed: boolean }[];
+    new_warnings: string[];
+  };
+  result: { error?: string; changes?: AiChange[] } | null;
+  created_at: string;
+}
+
+export interface AiConversation {
+  id: string;
+  title: string;
+  provider: string;
+  model: string;
+  updated_at: string;
+}
+
+export interface AiStatus {
+  provider: string;
+  model: string;
+  local: boolean;
+  ok: boolean;
+  error: string | null;
+  ai_opt_in: boolean;
 }
 
 export interface ChecklistItem {
@@ -71,11 +247,18 @@ export interface Task {
   buffer_after_min: number;
   energy: "high" | "medium" | "low" | null;
   calendar_id: string | null;
-  recurrence: { rrule: string; text?: string; kind?: string } | null;
+  scheduling_profile_id: string | null;
+  location: string | null;
+  travel_min: number;
+  recurrence: Recurrence | null;
+  series_id: string | null;
+  occurrence_due: string | null;
   tags: string[];
   links: { title: string; url: string }[];
   confidential: boolean;
   ai_allowed: boolean;
+  board_position: number;
+  is_milestone: boolean;
   completed_at: string | null;
   created_at: string;
   updated_at: string;
@@ -84,6 +267,77 @@ export interface Task {
   depends_on: string[];
   blocking: string[];
   overdue: boolean;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  schedule_status: "scheduled" | "partial" | "unscheduled" | "late" | null;
+  at_risk: boolean;
+  score: number | null;
+}
+
+export interface BlockReason {
+  score?: number;
+  parts?: Record<string, number>;
+  why?: string[];
+  bound_by?: string;
+  optimised?: boolean;
+}
+
+export interface Block {
+  id: string;
+  task_id: string;
+  title: string;
+  priority: Priority;
+  category_id: string | null;
+  color: string | null;
+  start: string;
+  end: string;
+  session_index: number;
+  session_count: number;
+  locked: boolean;
+  reason: BlockReason;
+}
+
+export interface PlanWarning {
+  kind: "cannot_meet_deadline" | "will_miss_soft_deadline" | "at_risk" | "unscheduled" | "blocked_by_prerequisite" | "locked_conflict" | "no_slot_long_enough";
+  task_id: string | null;
+  message: string;
+  data: Record<string, unknown>;
+}
+
+export interface Overload {
+  shortfall_min: number;
+  message: string;
+  defer: { task_id: string; title: string; minutes: number; score: number }[];
+  feasible_after_defer: boolean;
+}
+
+export interface Schedule {
+  run: { id: string; created_at: string; trigger: string; duration_ms: number; restored_from_id: string | null; block_count: number } | null;
+  blocks: Block[];
+  warnings: PlanWarning[];
+  overload: Overload | null;
+  days: { date: string; work_min: number; free_min: number; planned_min: number }[];
+  dirty: boolean;
+  can_undo: boolean;
+}
+
+export interface ScheduleSettings {
+  timezone: string;
+  work_hours: Record<string, [string, string][]>;
+  horizon_days: number;
+  transition_min: number;
+  daily_cap_min: number | null;
+  default_min_session: number;
+  freeze_min: number;
+  risk_slack_min: number;
+  grid_min: number;
+  weights: Record<string, number>;
+  energy_hours: { high?: [string, string]; low?: [string, string] };
+  optimize_hours: number;
+  holidays: string[];
+  write_days: number;
+  event_travel_min: number;
+  learn_durations: boolean;
 }
 
 export interface TaskEvent {
@@ -114,6 +368,7 @@ export interface Calendar {
   blocks_time: boolean;
   is_task_target: boolean;
   writable: boolean;
+  push_enabled: boolean;
   last_synced_at: string | null;
   last_error: string | null;
 }
@@ -148,3 +403,100 @@ export const STATUS_LABEL: Record<Status, string> = {
   done: "Done",
   cancelled: "Cancelled",
 };
+
+// -- Phase 5 ------------------------------------------------------------------------------------------------------
+
+export interface AppNotification {
+  id: string;
+  kind: string;
+  title: string;
+  body: string;
+  link: string | null;
+  task_id: string | null;
+  created_at: string;
+  read_at: string | null;
+  channels: Record<string, string>;
+}
+
+export interface NotifyPrefs {
+  push: boolean;
+  email_alerts: boolean;
+  email_digest: boolean;
+  digest_hour: number;
+  quiet_start: string;
+  quiet_end: string;
+  push_per_hour: number;
+  email_to: string;
+  kinds: Record<string, boolean>;
+}
+
+export interface NotifySettings {
+  prefs: NotifyPrefs;
+  kinds: Record<string, string>;
+  email: { enabled: boolean; to: string };
+  push: { enabled: boolean; public_key: string | null; subscriptions: number };
+}
+
+export type ImportRowState = "new" | "duplicate" | "duplicate_in_file" | "already_imported" | "completed" | "error";
+
+export interface ImportRow {
+  index: number;
+  state: ImportRowState;
+  action: "import" | "skip";
+  error: string | null;
+  warnings: string[];
+  duplicate_of: { id?: string; title?: string; deleted?: boolean; row?: number } | null;
+  fields: {
+    title?: string;
+    description?: string;
+    status?: string;
+    priority?: string;
+    deadline?: string | null;
+    deadline_type?: string;
+    duration_min?: number;
+    earliest_start?: string | null;
+    project?: string;
+    category?: string;
+    tags?: string[];
+    completed_at?: string | null;
+    external_id?: string;
+  };
+  notes: string[];
+}
+
+export interface ImportJob {
+  id: string;
+  source: string;
+  filename: string;
+  status: "review" | "applied" | "cancelled";
+  created_at: string;
+  applied_at: string | null;
+  options: { include_completed: boolean; default_duration: number; deadline_type: "hard" | "soft"; date_order: "mdy" | "dmy"; create_categories: boolean };
+  result: { created: number; skipped: number; projects_created: string[]; categories_created: string[] } | null;
+  targets: { key: string; label: string }[];
+  header?: string[];
+  samples?: Record<string, string>;
+  mapping?: Record<string, string>;
+  summary?: { rows: number; to_import: number; new: number; duplicates: number; already_imported: number; completed: number; errors: number; new_projects: string[]; unknown_categories: string[] };
+  rows?: ImportRow[];
+}
+
+export interface ActivityItem {
+  id: string;
+  at: string;
+  source: "account" | "task";
+  actor: string;
+  action: string;
+  label: string;
+  detail: Record<string, unknown>;
+  task_id: string | null;
+  task_title: string | null;
+}
+
+export interface SessionInfo {
+  id: string;
+  created_at: string;
+  expires_at: string;
+  user_agent: string;
+  current: boolean;
+}
