@@ -4,7 +4,7 @@ An auto-scheduling task manager: you enter tasks, deadlines, priorities and dura
 
 The full plan (requirements, Motion comparison, architecture, schema, scheduling algorithm, Google Calendar plan, milestones, testing, deployment, costs) is in the project's planning doc.
 
-## Status: Phase 3 (recurrence and calendars)
+## Status: Phase 4 (assistant and projects)
 
 | Area | What works now |
 | --- | --- |
@@ -22,11 +22,16 @@ The full plan (requirements, Motion comparison, architecture, schema, scheduling
 | Near-term optimiser | OR-Tools CP-SAT re-arranges the next 48 hours of flexible work after the constructive pass: honours time-of-day and energy preferences and finishes important work sooner, under every rule (deadlines, dependencies, windows, caps, buffers, locks). Deterministic (single thread, fixed seed, deterministic time budget) and only used when strictly better. |
 | Google Calendar write-back | Planned blocks are written to your chosen task calendar (or a task's own calendar), 14 days ahead by default. Each block has a fixed event id, so a retry after a lost response updates instead of duplicating (409 → update). Writes go through an outbox with backoff and a per-minute budget. Confidential tasks appear as a private "Focus block". Read-only calendars are never written. Moving one of these events in Google locks the task there; deleting one recreates it; an hourly reconciliation removes orphans and duplicates. |
 | Push notifications | With `MERIDIAN_PUBLIC_URL` set (HTTPS, e.g. Tailscale Funnel), Google push channels per calendar trigger a sync within seconds; tokens are stored hashed and channels renewed before they expire. Without it, the worker polls every 10 minutes and the app re-syncs on focus. |
+| AI assistant | Chat page (press **A**) that can find, create, edit, reschedule, complete and delete tasks, read the agenda and risks, and run what-ifs. Runs on Ollama on your own server by default (qwen3:8b); Claude is an optional provider. Every change goes through the same task service and scheduler as the UI, and the reply shows what was actually saved, read back from the database. Deleting, touching more than 5 tasks or moving work to another day shows a preview first and nothing changes until you press Confirm. The scheduler, not the AI, enforces every rule. |
+| AI privacy | Confidential tasks are hidden from the assistant unless you turn AI access on for that task, its category or its project; any task, category or project can also be hidden outright. Calendar event titles are not sent to a non-local provider unless you allow it in Settings. |
+| Projects | Areas, projects with start dates and deadlines, project pages with a Kanban board (drag to change status and order), a timeline (Gantt) with dependency arrows, milestones and deadlines, and a list. AI breakdown turns a goal into estimated tasks with dependencies, previewed before saving. Templates: save any project as one, three starters (talk, mediation, paper), deadlines counted from the project start. |
+| Focus and time | Today page with a daily Top 3 (suggested, or your pick) and the week ahead. Start/stop timer from any task, manual time entries, focus sessions (25/50/90 min). Stopping a timer reduces the remaining time, so the scheduler plans only what's left. |
+| Reports | Weekly dashboard, workload by day against working time (by category or project), time by category, project, day and task, CSV export, and estimate accuracy per category. "Plan with learned estimates" (off by default) scales new estimates by each category's median actual/estimate once it has 5 finished tasks (0.5×–2×). |
 | Data ownership | JSON and CSV export, JSON import with duplicate detection, account deletion. OAuth tokens encrypted at rest (Fernet, rotatable keys). No secrets in the browser bundle. |
 
-Not yet (later phases): AI assistant, projects views and reports (Phase 4); Motion import, notifications and hardening (Phase 5).
+Not yet (Phase 5): Motion import, notifications and hardening.
 
-Keyboard: **Q** quick add · **/** search · **T** today · **D / W / M** day, week, month · **← →** previous/next · **G** planner.
+Keyboard: **Q** quick add · **A** assistant · **/** search · **T** today · **D / W / M** day, week, month · **← →** previous/next · **G** planner.
 
 ## Run it locally
 
@@ -75,6 +80,18 @@ MERIDIAN_GOOGLE_USERINFO_URL=http://localhost:8765/userinfo
 MERIDIAN_GOOGLE_CALENDAR_API=http://localhost:8765/calendar/v3
 ```
 
+### AI assistant
+
+The assistant uses [Ollama](https://ollama.com) by default, so nothing leaves your server.
+
+```bash
+ollama pull qwen3:8b                 # then, in backend/.env (defaults shown):
+MERIDIAN_AI_PROVIDER=ollama
+MERIDIAN_OLLAMA_URL=http://localhost:11434
+```
+
+Under Docker Compose the API reaches Ollama on the host at `host.docker.internal:11434`. To use Claude instead, set `MERIDIAN_AI_PROVIDER=claude` and `MERIDIAN_ANTHROPIC_API_KEY`; the key stays on the server. `MERIDIAN_AI_PROVIDER=none` turns the assistant off. Without a model, `python -m scripts.fake_ollama_server` (port 11435) is a rule-based stand-in that understands "move the board memo to Friday" and "what's on today", for demos and tests.
+
 ## Tests
 
 ```bash
@@ -82,7 +99,7 @@ cd backend && python -m pytest -q        # needs the meridian_test database
 cd web && npx tsc --noEmit && npm run build
 ```
 
-Covered now: acceptance tests 1 (task placed before its deadline), 2 (a new meeting moves the task, not the meeting), 3 (urgent work displaces lower priority), 5 (impossible hard deadline alerts, never placed late), 6 (dependencies respected), 7 (partial completion schedules only the remaining time), 10 (locked blocks kept), 12 (overload detected with a deferral suggestion), 14 (complete → history), 8 (overlapping events across calendars and accounts merge into one busy span), 9 (sync failure, retry and token-expiry recovery without duplicates), 13 (events in other zones and across DST stored as correct instants), plus read-only calendar protection, user isolation, dependency loops, export/import de-duplication, OAuth state checking, and the quick-add examples from the brief. 13 is also checked end to end through the scheduler. Phase 3 adds 4 (completing a repeating task generates the next one), 9 on the write side (a lost response and a retry never duplicate an event; reconciliation removes duplicates) and 11 (last business day, with weekends and holidays). Test 15 (AI rescheduling) belongs to Phase 4.
+Covered now: acceptance tests 1 (task placed before its deadline), 2 (a new meeting moves the task, not the meeting), 3 (urgent work displaces lower priority), 5 (impossible hard deadline alerts, never placed late), 6 (dependencies respected), 7 (partial completion schedules only the remaining time), 10 (locked blocks kept), 12 (overload detected with a deferral suggestion), 14 (complete → history), 8 (overlapping events across calendars and accounts merge into one busy span), 9 (sync failure, retry and token-expiry recovery without duplicates), 13 (events in other zones and across DST stored as correct instants), plus read-only calendar protection, user isolation, dependency loops, export/import de-duplication, OAuth state checking, and the quick-add examples from the brief. 13 is also checked end to end through the scheduler. Phase 3 adds 4 (completing a repeating task generates the next one), 9 on the write side (a lost response and a retry never duplicate an event; reconciliation removes duplicates) and 11 (last business day, with weekends and holidays). Phase 4 adds 15 (the assistant reschedules a task; after Confirm the change is in the database, the plan and the Google Calendar event), plus the confirmation rules, privacy masking, project templates and breakdowns, and time tracking.
 
 ## Layout
 

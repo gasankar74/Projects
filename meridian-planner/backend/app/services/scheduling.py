@@ -27,7 +27,7 @@ ENGINE_KEYS = {
 }
 # Settings used around the engine: how far ahead blocks are written to Google, travel padding around events
 # that have a physical location.
-EXTRA_DEFAULTS = {"write_days": 14, "event_travel_min": 0}
+EXTRA_DEFAULTS = {"write_days": 14, "event_travel_min": 0, "learn_durations": False}
 SETTING_KEYS = ENGINE_KEYS | set(EXTRA_DEFAULTS)
 NULLABLE_KEYS = {"daily_cap_min", "energy_hours"}
 
@@ -178,15 +178,34 @@ def build_snapshot(db: Session, user: User, now: datetime | None = None, fresh: 
             if b.end_at > now and str(b.task_id) in open_ids:
                 note = (b.reason or {}).get("lock_note") if b.locked else None
                 previous.append(BlockInput(str(b.task_id), b.start_at, b.end_at, b.locked, note))
+    inputs = [_task_input(t, deps.get(t.id, []), projects, cat_profiles) for t in tasks]
+    if extra_setting(user, "learn_durations"):
+        inputs = _apply_learning(db, user, inputs)
     return Snapshot(
         now=now,
         settings=settings,
-        tasks=tuple(sorted((_task_input(t, deps.get(t.id, []), projects, cat_profiles) for t in tasks), key=lambda x: x.id)),
+        tasks=tuple(sorted(inputs, key=lambda x: x.id)),
         busy=tuple(busy),
         previous=tuple(previous),
         done_task_ids=frozenset(done),
         fresh=fresh,
     )
+
+
+def _apply_learning(db: Session, user: User, inputs: list[TaskInput]) -> list[TaskInput]:
+    """Duration learning (opt-in): pad or trim remaining estimates by how long this category's tasks really take."""
+    from .tracking import learned_factors
+
+    factors = learned_factors(db, user)
+    if not factors:
+        return inputs
+    out = []
+    for ti in inputs:
+        f = factors.get(ti.category_id or "none")
+        if f and ti.remaining_min > 0:
+            ti = replace(ti, remaining_min=max(5, int(round(ti.remaining_min * f / 5.0)) * 5))
+        out.append(ti)
+    return out
 
 
 # -- runs -------------------------------------------------------------------------------------------------------

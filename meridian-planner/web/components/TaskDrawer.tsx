@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, bus, useApi } from "@/lib/api";
 import { DAY_NAMES, fmtDeadline, fmtDuration, fromLocalInput, toLocalInput } from "@/lib/dates";
-import type { Block, Calendar, PlanWarning, Profile, Task, TaskEvent } from "@/lib/types";
+import type { Block, Calendar, PlanWarning, Profile, Task, TaskEvent, TimeEntry } from "@/lib/types";
 import { PRIORITIES, PRIORITY_LABEL, STATUS_LABEL } from "@/lib/types";
 import { RepeatEditor } from "./RepeatEditor";
 import { useApp } from "./Shell";
@@ -112,6 +112,7 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
       links,
       confidential: form.confidential,
       ai_allowed: form.ai_allowed,
+      is_milestone: form.is_milestone,
     };
     // Send only what changed, so the server's rules (e.g. leaving the inbox when filed) see real edits.
     const changed = Object.fromEntries(
@@ -152,12 +153,13 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
           <WhyTab taskId={task.id} />
         ) : tab === "history" ? (
           <div className="flex-1 overflow-y-auto p-4 text-sm">
+            <TimeLog taskId={taskId} onChange={reload} />
             {(history ?? []).map((h) => (
               <div key={h.id} className="border-b border-stone-100 py-2 dark:border-stone-800">
                 <div className="flex justify-between text-xs text-stone-500">
                   <span className="font-medium capitalize text-stone-700 dark:text-stone-300">{h.action.replace("_", " ")}</span>
                   <span>
-                    {new Date(h.at).toLocaleString()} · {h.actor}
+                    {new Date(h.at).toLocaleString()} · {h.actor === "ai" ? "assistant" : h.actor}
                   </span>
                 </div>
                 {h.action === "updated" && (
@@ -262,6 +264,9 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={!!form.auto_schedule} onChange={(e) => set({ auto_schedule: e.target.checked })} /> Auto-schedule
+                </label>
+                <label className="flex items-center gap-2 text-sm" title="A milestone marks a date on the project timeline (usually with auto-schedule off)">
+                  <input type="checkbox" checked={!!form.is_milestone} onChange={(e) => set({ is_milestone: e.target.checked })} /> Milestone
                 </label>
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={!!form.can_split} onChange={(e) => set({ can_split: e.target.checked })} /> Can be split
@@ -529,6 +534,61 @@ function WhyTab({ taskId }: { taskId: string }) {
           ))}
         </ul>
       </section>
+    </div>
+  );
+}
+
+function TimeLog({ taskId, onChange }: { taskId: string; onChange: () => void }) {
+  const { data: entries, reload } = useApi<TimeEntry[]>(`/time/entries?task_id=${taskId}`);
+  const [min, setMin] = useState("");
+  const [reduce, setReduce] = useState(true);
+  useEffect(() => bus.on("timer", reload), [reload]);
+  const total = (entries ?? []).reduce((a, e) => a + e.minutes, 0);
+  return (
+    <div className="mb-4 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+      <div className="mb-2 flex items-center gap-2 text-xs">
+        <span className="font-semibold tracking-wide text-stone-400 uppercase">Time tracked</span>
+        <span className="ml-auto font-medium tabular-nums">{fmtDuration(total)}</span>
+      </div>
+      <ul className="mb-2 space-y-0.5 text-xs text-stone-500">
+        {(entries ?? []).slice(0, 8).map((e) => (
+          <li key={e.id} className="flex gap-2">
+            <span>{new Date(e.started_at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+            <span className="tabular-nums">{e.running ? "running" : fmtDuration(e.minutes)}</span>
+            <span>{e.source === "manual" ? "logged" : e.source}</span>
+            {!e.running && (
+              <button
+                className="ml-auto text-stone-400 hover:text-red-600"
+                onClick={async () => {
+                  await api(`/time/entries/${e.id}`, { method: "DELETE" });
+                  reload();
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </li>
+        ))}
+      </ul>
+      <form
+        className="flex flex-wrap items-center gap-2 text-xs"
+        onSubmit={async (ev) => {
+          ev.preventDefault();
+          const m = Number(min);
+          if (!m) return;
+          await api("/time/entries", { method: "POST", json: { task_id: taskId, started_at: new Date(Date.now() - m * 60000).toISOString(), minutes: m, reduce_remaining: reduce } });
+          setMin("");
+          reload();
+          onChange();
+          bus.emit("tasks");
+        }}
+      >
+        <input className="input !w-24" type="number" min={1} placeholder="Minutes" value={min} onChange={(e) => setMin(e.target.value)} aria-label="Minutes to log" />
+        <label className="flex items-center gap-1">
+          <input type="checkbox" checked={reduce} onChange={(e) => setReduce(e.target.checked)} /> take off the estimate
+        </label>
+        <button className="btn text-xs">Log time</button>
+      </form>
     </div>
   );
 }

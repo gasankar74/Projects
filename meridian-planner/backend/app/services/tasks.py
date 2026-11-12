@@ -242,11 +242,15 @@ def _plan_stats(db: Session, user_id: uuid.UUID) -> dict:
     return run.task_stats if run else {}
 
 
+def _parse_dt(v):
+    return datetime.fromisoformat(v) if isinstance(v, str) else v
+
+
 def _apply_stats(out: TaskOut, st: dict | None) -> None:
     if not st or out.status in DONE_STATES:
         return
-    out.scheduled_start = st.get("start")
-    out.scheduled_end = st.get("finish")
+    out.scheduled_start = _parse_dt(st.get("start"))
+    out.scheduled_end = _parse_dt(st.get("finish"))
     out.schedule_status = st.get("status")
     out.at_risk = bool(st.get("at_risk"))
     out.score = st.get("score")
