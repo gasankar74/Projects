@@ -95,7 +95,7 @@ Each person gets their own separate account: their own tasks, calendars, plan, a
 
 - **Add someone:** add their Google address to `MERIDIAN_ALLOWED_EMAILS` in `backend/.env`, run `mp up -d`, and send them the address. They sign in with Google, then connect their calendars.
 - **One person, several Google accounts** (personal and work): list only the main address. After signing in, connect the others in **Calendars & settings > Connect Google account**; those accounts can then also be used to sign in, into the same Meridian account.
-- **Remove someone:** take their address off the list and `mp up -d` so they can't sign in again; they (or you, signed in as them) can delete the account from Settings, which also removes Meridian's blocks from their Google Calendar.
+- **Remove someone:** take their address off the list and `mp up -d`: they can't sign in again and their open sessions stop working; they (or you, signed in as them) can delete the account from Settings, which also removes Meridian's blocks from their Google Calendar.
 - **Google's side:** a personal OAuth app that hasn't been verified by Google shows an "unverified app" warning (click Advanced > continue) and is limited to 100 users, which is plenty.
 
 ## 2. Updating

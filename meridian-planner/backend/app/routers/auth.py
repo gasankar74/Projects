@@ -14,7 +14,7 @@ from ..config import get_settings
 from ..db import get_db
 from ..models import AuditLog, GoogleAccount, User
 from ..schemas import UserOut, UserUpdate
-from ..security import create_session, current_user, destroy_session, encrypt, sign_state, verify_state
+from ..security import create_session, current_user, destroy_session, email_allowed, encrypt, sign_state, verify_state
 from ..services import google as g
 from ..services.accounts import get_or_create_user
 from ..services.calendar_sync import sync_account
@@ -125,11 +125,11 @@ def google_callback(
 
 
 def sign_in_allowed(db: Session, email: str, sub: str) -> bool:
-    """With MERIDIAN_ALLOWED_EMAILS set, only those addresses, or Google accounts a signed-in user already connected, may sign in."""
-    allowed = {e.strip().lower() for e in get_settings().allowed_emails.split(",") if e.strip()}
-    if not allowed or (email or "").lower() in allowed:
+    """With MERIDIAN_ALLOWED_EMAILS set: listed addresses, or a Google account that a listed user connected in Settings."""
+    if email_allowed(email):
         return True
-    return db.scalar(select(GoogleAccount.id).where(GoogleAccount.google_sub == sub).limit(1)) is not None
+    owner = db.scalar(select(User).join(GoogleAccount, GoogleAccount.user_id == User.id).where(GoogleAccount.google_sub == sub).limit(1))
+    return owner is not None and email_allowed(owner.email)
 
 
 class DevLogin(BaseModel):

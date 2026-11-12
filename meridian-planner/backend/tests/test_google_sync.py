@@ -221,3 +221,9 @@ def test_allowed_emails_limits_who_can_sign_in(client, google, monkeypatch):
     client.cookies.clear()
     oauth(client, "code-biz")
     assert client.get("/auth/me").json()["email"] == "greg.personal@example.com"
+    # Taking the main address off the list ends existing sessions and blocks the connected account too.
+    monkeypatch.setattr(get_settings(), "allowed_emails", "someone.else@example.com")
+    assert client.get("/auth/me").status_code == 401
+    client.cookies.clear()
+    r = oauth(client, "code-biz")
+    assert "/login?error=" in r.headers["location"]
