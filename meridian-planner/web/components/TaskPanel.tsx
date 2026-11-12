@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import { bus, useApi } from "@/lib/api";
 import { addDays, fmtDuration, startOfDay } from "@/lib/dates";
 import type { Task } from "@/lib/types";
+import { PlanStatus } from "./PlanStatus";
 import { TaskRow } from "./TaskRow";
 
 function Group({ title, tasks, tone }: { title: string; tasks: Task[]; tone?: string }) {
@@ -29,6 +30,7 @@ function Group({ title, tasks, tone }: { title: string; tasks: Task[]; tone?: st
 export function TaskPanel() {
   const { data, reload } = useApi<{ items: Task[]; total: number }>("/tasks?limit=300");
   useEffect(() => bus.on("tasks", reload), [reload]);
+  useEffect(() => bus.on("schedule", reload), [reload]);
   const tasks = data?.items ?? [];
   const today = startOfDay(new Date());
   const tomorrow = addDays(today, 1);
@@ -53,8 +55,8 @@ export function TaskPanel() {
         <div className="mt-1 text-xs text-stone-500">
           {data ? `${data.total} open · ${fmtDuration(totalMin)} of work remaining` : "Loading…"}
         </div>
-        <div className="mt-2 rounded-md bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
-          Automatic scheduling arrives in Phase 2. For now this list is ordered by overdue, priority, then deadline.
+        <div className="mt-2">
+          <PlanStatus />
         </div>
       </div>
       <div className="flex-1 overflow-y-auto">

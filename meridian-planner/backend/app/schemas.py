@@ -220,6 +220,12 @@ class TaskOut(ORM):
     depends_on: list[uuid.UUID] = []
     blocking: list[uuid.UUID] = []
     overdue: bool = False
+    # From the current plan (None when the task isn't scheduled).
+    scheduled_start: datetime | None = None
+    scheduled_end: datetime | None = None
+    schedule_status: str | None = None  # scheduled | partial | unscheduled | late
+    at_risk: bool = False
+    score: float | None = None
 
 
 class TaskList(BaseModel):

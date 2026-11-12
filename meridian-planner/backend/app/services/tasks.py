@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Calendar, Category, ChecklistItem, Project, Task, TaskDependency, TaskEvent, User
+from ..models import Calendar, Category, ChecklistItem, Project, ScheduleRun, Task, TaskDependency, TaskEvent, User
 from ..schemas import TaskCreate, TaskFields, TaskOut
 
 DONE_STATES = ("done", "cancelled")
@@ -35,6 +35,11 @@ def _jsonable(v: Any) -> Any:
 
 def record(db: Session, task: Task, action: str, diff: dict | None = None, actor: str = "user") -> None:
     db.add(TaskEvent(user_id=task.user_id, task_id=task.id, actor=actor, action=action, diff=_jsonable(diff or {})))
+    # Every task change is a replan trigger (the worker debounces; an unchanged input hash skips the run).
+    owner = db.get(User, task.user_id)
+    if owner is not None:
+        owner.schedule_dirty_at = now_utc()
+        owner.schedule_dirty_reason = f"task {action}: {task.title}"[:200]
 
 
 def get_task(db: Session, user: User, task_id: uuid.UUID) -> Task:
@@ -219,7 +224,24 @@ def add_dependency(db: Session, user: User, task: Task, depends_on_id: uuid.UUID
         db.commit()
 
 
-def to_out(db: Session, task: Task, deps: dict | None = None) -> TaskOut:
+def _plan_stats(db: Session, user_id: uuid.UUID) -> dict:
+    run = db.scalars(
+        select(ScheduleRun).where(ScheduleRun.user_id == user_id, ScheduleRun.applied.is_(True)).order_by(ScheduleRun.created_at.desc()).limit(1)
+    ).first()
+    return run.task_stats if run else {}
+
+
+def _apply_stats(out: TaskOut, st: dict | None) -> None:
+    if not st or out.status in DONE_STATES:
+        return
+    out.scheduled_start = st.get("start")
+    out.scheduled_end = st.get("finish")
+    out.schedule_status = st.get("status")
+    out.at_risk = bool(st.get("at_risk"))
+    out.score = st.get("score")
+
+
+def to_out(db: Session, task: Task, deps: dict | None = None, stats: dict | None = None) -> TaskOut:
     if deps is None:
         depends_on = list(db.scalars(select(TaskDependency.depends_on_task_id).where(TaskDependency.task_id == task.id)))
         blocking = list(db.scalars(select(TaskDependency.task_id).where(TaskDependency.depends_on_task_id == task.id)))
@@ -230,6 +252,9 @@ def to_out(db: Session, task: Task, deps: dict | None = None) -> TaskOut:
     out.depends_on = depends_on
     out.blocking = blocking
     out.overdue = bool(task.deadline and task.status not in DONE_STATES and task.deadline < now_utc())
+    if stats is None:
+        stats = _plan_stats(db, task.user_id)
+    _apply_stats(out, stats.get(str(task.id)))
     return out
 
 
@@ -245,4 +270,5 @@ def bulk_out(db: Session, tasks: list[Task]) -> list[TaskOut]:
         ):
             on.setdefault(d.task_id, []).append(d.depends_on_task_id)
             blocking.setdefault(d.depends_on_task_id, []).append(d.task_id)
-    return [to_out(db, t, {"on": on, "blocking": blocking}) for t in tasks]
+    stats = _plan_stats(db, tasks[0].user_id) if tasks else {}
+    return [to_out(db, t, {"on": on, "blocking": blocking}, stats) for t in tasks]

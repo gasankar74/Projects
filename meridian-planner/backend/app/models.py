@@ -48,6 +48,9 @@ class User(TimestampMixin, Base):
     settings: Mapped[dict] = mapped_column(JSONB, default=dict)
     # Privileged task details are never sent to an AI provider unless this is true (or the task opts in).
     ai_opt_in: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Set when something the scheduler depends on changed; the worker replans a few seconds later (debounce).
+    schedule_dirty_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    schedule_dirty_reason: Mapped[str | None] = mapped_column(String(200))
 
 
 class AuthSession(TimestampMixin, Base):
@@ -310,3 +313,40 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(64))
     detail: Mapped[dict] = mapped_column(JSONB, default=dict)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ScheduleRun(Base):
+    """One run of the scheduler. The newest applied run is the current plan; older runs allow undo."""
+
+    __tablename__ = "schedule_runs"
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+    trigger: Mapped[str] = mapped_column(String(200), default="manual")
+    input_hash: Mapped[str] = mapped_column(String(64))
+    applied: Mapped[bool] = mapped_column(Boolean, default=True)
+    restored_from_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    warnings: Mapped[list] = mapped_column(JSONB, default=list)
+    overload: Mapped[dict | None] = mapped_column(JSONB)
+    task_stats: Mapped[dict] = mapped_column(JSONB, default=dict)
+    days: Mapped[list] = mapped_column(JSONB, default=list)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+
+    blocks: Mapped[list["ScheduledBlock"]] = relationship(back_populates="run", cascade="all, delete-orphan", order_by="ScheduledBlock.start_at")
+
+
+class ScheduledBlock(Base):
+    __tablename__ = "scheduled_blocks"
+    __table_args__ = (Index("ix_scheduled_blocks_user_run", "user_id", "run_id"),)
+    id: Mapped[uuid.UUID] = uuid_pk()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("schedule_runs.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    task_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tasks.id", ondelete="CASCADE"), index=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    session_index: Mapped[int] = mapped_column(Integer, default=1)
+    session_count: Mapped[int] = mapped_column(Integer, default=1)
+    locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    reason: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+    run: Mapped[ScheduleRun] = relationship(back_populates="blocks")

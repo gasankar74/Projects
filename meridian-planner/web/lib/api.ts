@@ -69,10 +69,10 @@ export function useApi<T>(path: string | null) {
 
 /** Lets one part of the page tell others that tasks or calendars changed. */
 export const bus = {
-  emit(name: "tasks" | "calendars") {
+  emit(name: "tasks" | "calendars" | "schedule") {
     window.dispatchEvent(new CustomEvent(`meridian:${name}`));
   },
-  on(name: "tasks" | "calendars", fn: () => void) {
+  on(name: "tasks" | "calendars" | "schedule", fn: () => void) {
     const h = () => fn();
     window.addEventListener(`meridian:${name}`, h);
     return () => window.removeEventListener(`meridian:${name}`, h);

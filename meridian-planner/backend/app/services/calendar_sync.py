@@ -180,7 +180,12 @@ def sync_account(db: Session, account: GoogleAccount, client: GoogleClient) -> d
             if not cal.selected:
                 continue
             try:
-                result["calendars"][cal.summary] = sync_calendar_events(db, cal, client, token, tz_fallback)
+                res = sync_calendar_events(db, cal, client, token, tz_fallback)
+                result["calendars"][cal.summary] = res
+                if user and any(res.get(k) for k in ("created", "updated", "cancelled", "removed")):
+                    user.schedule_dirty_at = now_utc()
+                    user.schedule_dirty_reason = f"calendar \"{cal.summary}\" changed"
+                    db.commit()
             except GoogleError as e:
                 db.rollback()
                 cal.last_error = e.message[:1000]

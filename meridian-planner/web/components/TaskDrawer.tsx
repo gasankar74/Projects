@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { api, bus, useApi } from "@/lib/api";
-import { DAY_NAMES, fmtDeadline, fromLocalInput, toLocalInput } from "@/lib/dates";
-import type { Calendar, Task, TaskEvent } from "@/lib/types";
+import { DAY_NAMES, fmtDeadline, fmtDuration, fromLocalInput, toLocalInput } from "@/lib/dates";
+import type { Block, Calendar, PlanWarning, Task, TaskEvent } from "@/lib/types";
 import { PRIORITIES, PRIORITY_LABEL, STATUS_LABEL } from "@/lib/types";
 import { useApp } from "./Shell";
 
@@ -28,7 +28,7 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newItem, setNewItem] = useState("");
-  const [tab, setTab] = useState<"details" | "history">("details");
+  const [tab, setTab] = useState<"details" | "schedule" | "history">("details");
 
   useEffect(() => {
     if (task) {
@@ -127,9 +127,9 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
             </button>
           )}
           <div className="ml-2 flex gap-1 text-sm">
-            {(["details", "history"] as const).map((t) => (
+            {(["details", "schedule", "history"] as const).map((t) => (
               <button key={t} className={`rounded px-2 py-1 ${tab === t ? "bg-stone-100 font-medium dark:bg-stone-800" : "text-stone-500"}`} onClick={() => setTab(t)}>
-                {t === "details" ? "Details" : "History"}
+                {t === "details" ? "Details" : t === "schedule" ? "Schedule" : "History"}
               </button>
             ))}
           </div>
@@ -139,6 +139,8 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
         </div>
         {!task ? (
           <div className="p-6 text-sm text-stone-500">Loading…</div>
+        ) : tab === "schedule" ? (
+          <WhyTab taskId={task.id} />
         ) : tab === "history" ? (
           <div className="flex-1 overflow-y-auto p-4 text-sm">
             {(history ?? []).map((h) => (
@@ -419,6 +421,77 @@ export function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () =>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+interface Why {
+  stats: { score: number; parts: Record<string, number>; status: string; start: string | null; finish: string | null; slack_min: number | null; at_risk: boolean; unscheduled_min: number } | null;
+  blocks: Block[];
+  warnings: PlanWarning[];
+  auto_schedule: boolean;
+  done: boolean;
+}
+
+const PART_LABEL: Record<string, string> = { P: "Priority", U: "Urgency (free time left before the deadline)", C: "Deadline type", B: "Other tasks waiting on it", J: "Project", R: "Progress already made", A: "Narrow allowed hours" };
+
+/** What the scheduler decided for this task, and why. */
+function WhyTab({ taskId }: { taskId: string }) {
+  const { data, reload } = useApi<Why>(`/schedule/tasks/${taskId}/why`);
+  useEffect(() => bus.on("schedule", reload), [reload]);
+  useEffect(() => bus.on("tasks", reload), [reload]);
+  if (!data) return <div className="p-6 text-sm text-stone-500">Loading…</div>;
+  if (data.done) return <div className="p-6 text-sm text-stone-500">This task is finished, so it isn&apos;t scheduled.</div>;
+  if (!data.auto_schedule) return <div className="p-6 text-sm text-stone-500">Automatic scheduling is off for this task. Turn it on in Details to have it planned.</div>;
+  const st = data.stats;
+  return (
+    <div className="flex-1 space-y-4 overflow-y-auto p-4 text-sm">
+      {data.warnings.map((w, i) => (
+        <div key={i} className="rounded-lg border border-orange-200 bg-orange-50 p-2.5 text-xs text-orange-900 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-100">
+          {w.message}
+        </div>
+      ))}
+      {st && (
+        <section>
+          <h3 className="label">Score {st.score} / 100</h3>
+          <ul className="space-y-1">
+            {Object.entries(st.parts).map(([k, v]) => (
+              <li key={k} className="flex items-center gap-2 text-xs">
+                <span className="w-56 text-stone-600 dark:text-stone-300">{PART_LABEL[k] ?? k}</span>
+                <span className="h-1.5 flex-1 rounded bg-stone-100 dark:bg-stone-800">
+                  <span className="block h-1.5 rounded bg-brand-500" style={{ width: `${Math.round(v * 100)}%` }} />
+                </span>
+                <span className="w-9 text-right text-stone-500">{Math.round(v * 100)}%</span>
+              </li>
+            ))}
+          </ul>
+          {st.finish && (
+            <p className="mt-2 text-xs text-stone-500">
+              Planned to finish {new Date(st.finish).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+              {st.slack_min !== null && st.slack_min >= 0 && `, with ${fmtDuration(st.slack_min)} of working time to spare before the deadline`}.
+            </p>
+          )}
+        </section>
+      )}
+      <section>
+        <h3 className="label">Planned sessions</h3>
+        {data.blocks.length === 0 && <p className="text-xs text-stone-500">Nothing scheduled yet.</p>}
+        <ul className="space-y-3">
+          {data.blocks.map((b) => (
+            <li key={b.id} className="rounded-lg border border-stone-200 p-2.5 dark:border-stone-800">
+              <div className="flex items-center gap-2 text-xs font-medium">
+                {new Date(b.start).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} – {new Date(b.end).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+                {b.locked && <span className="chip bg-stone-200 dark:bg-stone-700">Locked</span>}
+              </div>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4 text-xs text-stone-600 dark:text-stone-300">
+                {(b.reason.why ?? []).map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }

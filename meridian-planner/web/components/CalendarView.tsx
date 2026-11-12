@@ -1,28 +1,36 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { bus, useApi } from "@/lib/api";
-import { addDays, DAY_NAMES, fmtTime, sameDay, startOfDay, startOfWeek } from "@/lib/dates";
-import type { CalEvent } from "@/lib/types";
+import { api, bus, useApi } from "@/lib/api";
+import { addDays, DAY_NAMES, fmtDuration, fmtTime, sameDay, startOfDay, startOfWeek } from "@/lib/dates";
+import type { Block, CalEvent, Schedule } from "@/lib/types";
+import { useApp } from "./Shell";
 
 export type CalMode = "day" | "week" | "month";
 const HOUR_PX = 48;
 
+type Item = { ev: CalEvent; blk?: undefined } | { ev?: undefined; blk: Block };
+
 interface Placed {
-  ev: CalEvent;
+  ev?: CalEvent;
+  blk?: Block;
   start: Date;
   end: Date;
   col: number;
   cols: number;
 }
 
-/** Side-by-side layout for overlapping events within one day. */
-function layoutDay(events: CalEvent[], day: Date): Placed[] {
+/** Side-by-side layout for overlapping events and task blocks within one day. */
+function layoutDay(items_: Item[], day: Date): Placed[] {
   const dayStart = startOfDay(day);
   const dayEnd = addDays(dayStart, 1);
-  const items = events
-    .filter((e) => !e.all_day)
-    .map((ev) => ({ ev, start: new Date(Math.max(new Date(ev.start_at).getTime(), dayStart.getTime())), end: new Date(Math.min(new Date(ev.end_at).getTime(), dayEnd.getTime())) }))
+  const items = items_
+    .filter((x) => !x.ev?.all_day)
+    .map((x) => {
+      const s = x.ev ? x.ev.start_at : x.blk!.start;
+      const e = x.ev ? x.ev.end_at : x.blk!.end;
+      return { ...x, start: new Date(Math.max(new Date(s).getTime(), dayStart.getTime())), end: new Date(Math.min(new Date(e).getTime(), dayEnd.getTime())) };
+    })
     .filter((x) => x.end > x.start)
     .sort((a, b) => a.start.getTime() - b.start.getTime() || b.end.getTime() - a.end.getTime());
   const out: Placed[] = [];
@@ -51,6 +59,94 @@ function eventStyle(ev: CalEvent): React.CSSProperties {
   return ev.is_busy
     ? { background: `${c}26`, borderLeft: `3px solid ${c}` }
     : { background: `repeating-linear-gradient(135deg, ${c}14 0 6px, transparent 6px 12px)`, borderLeft: `3px dashed ${c}` };
+}
+
+function blockStyle(b: Block, selected: boolean): React.CSSProperties {
+  const c = b.color ?? "#17766f";
+  return {
+    background: `${c}33`,
+    border: `1px solid ${c}`,
+    boxShadow: selected ? `0 0 0 2px ${c}` : undefined,
+  };
+}
+
+function LockIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true" className="inline shrink-0">
+      <rect x="4" y="11" width="16" height="10" rx="2" />
+      <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+    </svg>
+  );
+}
+
+/** "Why here?" card for one scheduled block, with lock/unlock and a link to the task. */
+function BlockCard({ b, onClose, onChanged }: { b: Block; onClose: () => void; onChanged: (s: Schedule) => void }) {
+  const { openTask } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  async function setLocked(locked: boolean) {
+    setBusy(true);
+    setErr(null);
+    try {
+      onChanged(await api<Schedule>(`/schedule/blocks/${b.id}`, { method: "PATCH", json: { locked } }));
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const s = new Date(b.start);
+  const e = new Date(b.end);
+  const parts = b.reason.parts ?? {};
+  const PART: Record<string, string> = { P: "Priority", U: "Urgency", C: "Deadline type", B: "Others waiting", J: "Project", R: "Progress", A: "Narrow window" };
+  return (
+    <div className="absolute top-2 right-2 z-30 w-80 max-w-[calc(100%-1rem)] rounded-xl border border-stone-200 bg-white p-4 shadow-xl dark:border-stone-700 dark:bg-stone-900" role="dialog" aria-label="Why it's scheduled here">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold tracking-wide text-stone-500 uppercase">Why it&apos;s here</div>
+          <div className="mt-0.5 font-semibold">{b.title}</div>
+          <div className="text-xs text-stone-500">
+            {s.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}, {fmtTime(s)} – {fmtTime(e)} · {fmtDuration((e.getTime() - s.getTime()) / 60000)}
+            {b.session_count > 1 && ` · session ${b.session_index} of ${b.session_count}`}
+          </div>
+        </div>
+        <button className="ml-auto rounded p-1 text-stone-500 hover:bg-stone-100 dark:hover:bg-stone-800" onClick={onClose} aria-label="Close">
+          ×
+        </button>
+      </div>
+      <ul className="mt-3 space-y-1.5 text-sm">
+        {(b.reason.why ?? []).map((w, i) => (
+          <li key={i} className="flex gap-2">
+            <span className="text-brand-600">✓</span>
+            <span>{w}</span>
+          </li>
+        ))}
+      </ul>
+      {b.reason.score !== undefined && (
+        <div className="mt-3 rounded-md bg-stone-50 p-2 text-[11px] text-stone-600 dark:bg-stone-800 dark:text-stone-300">
+          <div className="font-medium">Score {b.reason.score} / 100</div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+            {Object.entries(parts)
+              .filter(([, v]) => v > 0)
+              .map(([k, v]) => (
+                <span key={k}>
+                  {PART[k] ?? k} {Math.round(v * 100)}%
+                </span>
+              ))}
+          </div>
+        </div>
+      )}
+      {err && <div className="mt-2 text-xs text-red-600">{err}</div>}
+      <div className="mt-3 flex gap-2">
+        <button className="btn" disabled={busy} onClick={() => setLocked(!b.locked)}>
+          {b.locked ? "Unlock" : "Lock this time"}
+        </button>
+        <button className="btn" onClick={() => openTask(b.task_id)}>
+          Open task
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function EventChip({ ev, compact }: { ev: CalEvent; compact?: boolean }) {
@@ -92,8 +188,22 @@ export function CalendarView() {
     return { start: s, days: span };
   }, [mode, anchor]);
   const end = addDays(start, days);
-  const { data: events, reload } = useApi<CalEvent[]>(`/events?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`);
-  useEffect(() => bus.on("calendars", reload), [reload]);
+  const range = `start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`;
+  const { data: events, reload } = useApi<CalEvent[]>(`/events?${range}`);
+  const { data: plan, reload: reloadPlan, setData: setPlan } = useApi<Schedule>(`/schedule?${range}`);
+  // Selection survives replans (block ids change with every run), so it is keyed by task and start time.
+  const [selKey, setSelKey] = useState<string | null>(null);
+  const keyOf = (b: Block) => `${b.task_id}|${b.start}`;
+  useEffect(() => bus.on("calendars", () => (reload(), reloadPlan())), [reload, reloadPlan]);
+  useEffect(() => bus.on("tasks", reloadPlan), [reloadPlan]);
+  useEffect(() => bus.on("schedule", reloadPlan), [reloadPlan]);
+  const blocks = plan?.blocks ?? [];
+  const sel = blocks.find((b) => keyOf(b) === selKey) ?? null;
+  const onPlanChanged = (s: Schedule) => {
+    setPlan(s);
+    reloadPlan();
+    bus.emit("schedule");
+  };
 
   useEffect(() => {
     if (scrollRef.current && mode !== "month") scrollRef.current.scrollTop = HOUR_PX * 7.5;
@@ -162,6 +272,7 @@ export function CalendarView() {
           ))}
           {dayList.map((d) => {
             const list = [...allDayFor(d), ...evs.filter((e) => !e.all_day && sameDay(new Date(e.start_at), d))];
+            const dayBlocks = blocks.filter((b) => sameDay(new Date(b.start), d));
             return (
               <div key={d.toISOString()} className={`border-b border-r border-stone-100 p-1 dark:border-stone-800 ${d.getMonth() !== anchor.getMonth() ? "bg-stone-50 text-stone-400 dark:bg-stone-900/50" : ""}`}>
                 <button className={`mb-0.5 rounded-full px-1.5 ${sameDay(d, now) ? "bg-brand-600 text-white" : ""}`} onClick={() => (setAnchor(d), setMode("day"))}>
@@ -172,6 +283,11 @@ export function CalendarView() {
                     <EventChip key={e.id + d.toISOString()} ev={e} compact />
                   ))}
                   {list.length > 3 && <div className="text-stone-400">+{list.length - 3} more</div>}
+                  {dayBlocks.length > 0 && (
+                    <button className="block w-full truncate rounded px-1 py-0.5 text-left text-[11px] font-medium" style={{ background: "#17766f22", color: "#125e58" }} onClick={() => (setAnchor(d), setMode("day"))}>
+                      {dayBlocks.length} planned · {fmtDuration(dayBlocks.reduce((a, b) => a + (new Date(b.end).getTime() - new Date(b.start).getTime()) / 60000, 0))}
+                    </button>
+                  )}
                 </div>
               </div>
             );
@@ -194,6 +310,11 @@ export function CalendarView() {
               </div>
             ))}
           </div>
+          {sel && (
+            <div className="relative">
+              <BlockCard b={sel} onClose={() => setSelKey(null)} onChanged={onPlanChanged} />
+            </div>
+          )}
           <div ref={scrollRef} className="relative flex flex-1 overflow-y-auto">
             <div className="w-12 shrink-0">
               {Array.from({ length: 24 }, (_, h) => (
@@ -207,20 +328,46 @@ export function CalendarView() {
                 {Array.from({ length: 24 }, (_, h) => (
                   <div key={h} className="border-t border-stone-100 dark:border-stone-800/70" style={{ height: HOUR_PX }} />
                 ))}
-                {layoutDay(evs, d).map((p) => {
+                {layoutDay([...evs.map((ev) => ({ ev })), ...blocks.map((blk) => ({ blk }))], d).map((p) => {
                   const top = ((p.start.getTime() - startOfDay(d).getTime()) / 3600000) * HOUR_PX;
                   const h = Math.max(18, ((p.end.getTime() - p.start.getTime()) / 3600000) * HOUR_PX - 2);
+                  if (p.blk) {
+                    const b = p.blk;
+                    const bh = Math.max(12, ((p.end.getTime() - p.start.getTime()) / 3600000) * HOUR_PX - 2);
+                    const tiny = bh < 24;
+                    return (
+                      <button
+                        key={b.id + d.toISOString()}
+                        onClick={() => setSelKey(keyOf(b) === selKey ? null : keyOf(b))}
+                        className={`absolute overflow-hidden rounded-md px-1.5 text-left leading-tight text-stone-900 hover:z-10 hover:shadow dark:text-stone-50 ${tiny ? "py-0 text-[10px]" : "py-0.5 text-[11px]"}`}
+                        style={{ ...blockStyle(b, keyOf(b) === selKey), top, height: bh, left: `calc(${(p.col / p.cols) * 100}% + 2px)`, width: `calc(${100 / p.cols}% - 4px)` }}
+                        aria-label={`${b.title}, ${fmtTime(p.start)} to ${fmtTime(p.end)}. Show why it is scheduled here`}
+                      >
+                        <div className="flex items-center gap-1 truncate font-semibold">
+                          {b.locked && <LockIcon />}
+                          <span className="truncate">{b.title}</span>
+                          {b.session_count > 1 && <span className="shrink-0 font-normal opacity-70">{b.session_index}/{b.session_count}</span>}
+                        </div>
+                        {bh > 30 && (
+                          <div className="truncate opacity-75">
+                            {fmtTime(p.start)} – {fmtTime(p.end)}
+                          </div>
+                        )}
+                      </button>
+                    );
+                  }
+                  const ev = p.ev!;
                   return (
                     <a
-                      key={p.ev.id}
-                      href={p.ev.html_link ?? undefined}
+                      key={ev.id}
+                      href={ev.html_link ?? undefined}
                       target="_blank"
                       rel="noreferrer"
                       className="absolute overflow-hidden rounded-md px-1.5 py-0.5 text-[11px] leading-tight text-stone-800 hover:z-10 hover:shadow dark:text-stone-100"
-                      style={{ ...eventStyle(p.ev), top, height: h, left: `calc(${(p.col / p.cols) * 100}% + 2px)`, width: `calc(${100 / p.cols}% - 4px)` }}
-                      title={`${p.ev.summary}\n${fmtTime(p.start)} – ${fmtTime(p.end)}\n${p.ev.calendar_name ?? ""}${p.ev.is_busy ? " · busy" : " · free"}${p.ev.read_only ? " · read-only" : ""}`}
+                      style={{ ...eventStyle(ev), top, height: h, left: `calc(${(p.col / p.cols) * 100}% + 2px)`, width: `calc(${100 / p.cols}% - 4px)` }}
+                      title={`${ev.summary}\n${fmtTime(p.start)} – ${fmtTime(p.end)}\n${ev.calendar_name ?? ""}${ev.is_busy ? " · busy" : " · free"}${ev.read_only ? " · read-only" : ""}`}
                     >
-                      <div className="truncate font-medium">{p.ev.summary}</div>
+                      <div className="truncate font-medium">{ev.summary}</div>
                       {h > 30 && (
                         <div className="truncate text-stone-500 dark:text-stone-400">
                           {fmtTime(p.start)} – {fmtTime(p.end)}

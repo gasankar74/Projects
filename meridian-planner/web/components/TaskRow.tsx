@@ -73,6 +73,13 @@ export function TaskRow({ task, compact = false }: { task: Task; compact?: boole
           )}
           {!compact && proj && <span>· {proj.name}</span>}
           {task.depends_on.length > 0 && <span title="Waiting on another task">⧗ blocked by {task.depends_on.length}</span>}
+          {!done && task.scheduled_start && (
+            <span className="text-brand-700 dark:text-brand-100" title="Next scheduled work on this task">
+              ▸ {fmtDeadline(task.scheduled_start)}
+            </span>
+          )}
+          {!done && task.auto_schedule && task.schedule_status === "unscheduled" && <span className="chip bg-stone-200 text-stone-700 dark:bg-stone-700 dark:text-stone-200">Not scheduled</span>}
+          {!done && task.at_risk && <span className="chip bg-orange-100 text-orange-800 dark:bg-orange-500/20 dark:text-orange-200">At risk</span>}
           {task.status === "inbox" && <span className="chip bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">Inbox</span>}
         </div>
       </div>

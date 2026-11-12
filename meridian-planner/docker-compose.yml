@@ -1,4 +1,4 @@
-# Local stack: PostgreSQL, Redis (used from Phase 2), API and web app.
+# Local stack: PostgreSQL, API, scheduler worker and web app.
 #   cp backend/.env.example backend/.env   # fill in the keys
 #   docker compose up --build
 services:
@@ -10,9 +10,6 @@ services:
       POSTGRES_DB: meridian
     ports: ["5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
-  redis:
-    image: redis:7
-    ports: ["6379:6379"]
   api:
     build: ./backend
     env_file: ./backend/.env
@@ -20,6 +17,13 @@ services:
       MERIDIAN_DATABASE_URL: postgresql+psycopg://meridian:meridian@db:5432/meridian
     depends_on: [db]
     ports: ["8000:8000"]
+  worker:
+    build: ./backend
+    command: python -m app.cli worker
+    env_file: ./backend/.env
+    environment:
+      MERIDIAN_DATABASE_URL: postgresql+psycopg://meridian:meridian@db:5432/meridian
+    depends_on: [db, api]
   web:
     build:
       context: ./web

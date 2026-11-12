@@ -147,6 +147,9 @@ def me(user: User = Depends(current_user)):
 def update_me(body: UserUpdate, user: User = Depends(current_user), db: Session = Depends(get_db)):
     for k, v in body.model_dump(exclude_unset=True).items():
         if v is not None:
+            if k == "timezone" and v != user.timezone:
+                user.schedule_dirty_at = datetime.now(timezone.utc)
+                user.schedule_dirty_reason = f"time zone changed to {v}"
             setattr(user, k, v)
     db.commit()
     return user

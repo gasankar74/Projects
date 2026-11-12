@@ -140,6 +140,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
       <div className="space-y-0.5">
         <NavLink href="/" label="Planner" active={path === "/"} />
         <NavLink href="/tasks" label="All tasks" active={path === "/tasks" && !view && !cat && !proj} />
+        <NavLink href="/matrix" label="Priority matrix" active={path === "/matrix"} />
         <NavLink href="/tasks?view=inbox" label="Inbox" count={inbox?.total} active={view === "inbox"} />
         <NavLink href="/tasks?view=overdue" label="Overdue" count={overdue?.total} active={view === "overdue"} />
         <NavLink href="/tasks?view=history" label="Completed" active={view === "history"} />

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Shell, useApp } from "@/components/Shell";
 import { api, bus, useApi } from "@/lib/api";
-import type { Calendar, GoogleAccount } from "@/lib/types";
+import type { Calendar, GoogleAccount, ScheduleSettings } from "@/lib/types";
 import { PRIORITIES, PRIORITY_LABEL } from "@/lib/types";
 
 const ROLE_LABEL: Record<string, string> = { owner: "Owner", writer: "Can edit", reader: "Read-only", freeBusyReader: "Free/busy only" };
@@ -295,6 +295,107 @@ function Data() {
   );
 }
 
+const DAYS: [string, string][] = [
+  ["mon", "Monday"],
+  ["tue", "Tuesday"],
+  ["wed", "Wednesday"],
+  ["thu", "Thursday"],
+  ["fri", "Friday"],
+  ["sat", "Saturday"],
+  ["sun", "Sunday"],
+];
+
+function Scheduling() {
+  const { data, setData } = useApi<ScheduleSettings>("/schedule/settings");
+  const [msg, setMsg] = useState<string | null>(null);
+  const [draft, setDraft] = useState<ScheduleSettings | null>(null);
+  useEffect(() => {
+    if (data) setDraft(data);
+  }, [data]);
+  if (!draft) return <Card title="Work hours and scheduling">Loading…</Card>;
+
+  const hours = draft.work_hours;
+  const setDay = (d: string, spans: [string, string][]) => setDraft({ ...draft, work_hours: { ...hours, [d]: spans } });
+  async function save() {
+    setMsg(null);
+    try {
+      const out = await api<ScheduleSettings>("/schedule/settings", {
+        method: "PATCH",
+        json: {
+          work_hours: draft!.work_hours,
+          transition_min: draft!.transition_min,
+          daily_cap_min: draft!.daily_cap_min,
+          horizon_days: draft!.horizon_days,
+          default_min_session: draft!.default_min_session,
+        },
+      });
+      setData(out);
+      setMsg("Saved. Your plan is being updated.");
+      bus.emit("schedule");
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
+  }
+  return (
+    <Card title="Work hours and scheduling" actions={<button className="btn-primary" onClick={save}>Save</button>}>
+      <p className="mb-3 text-xs text-stone-500">
+        Tasks are only scheduled inside these hours, in your time zone ({draft.timezone}). Calendar events still block time inside them.
+      </p>
+      <div className="space-y-2">
+        {DAYS.map(([d, label]) => {
+          const spans = hours[d] ?? [];
+          const on = spans.length > 0;
+          return (
+            <div key={d} className="flex flex-wrap items-center gap-2 text-sm">
+              <label className="flex w-32 items-center gap-2">
+                <input type="checkbox" checked={on} onChange={(e) => setDay(d, e.target.checked ? [["09:00", "17:00"]] : [])} />
+                {label}
+              </label>
+              {spans.map((sp, i) => (
+                <span key={i} className="flex items-center gap-1">
+                  <input aria-label={`${label} start`} type="time" className="input !w-28" value={sp[0]} onChange={(e) => setDay(d, spans.map((x, j) => (j === i ? [e.target.value, x[1]] : x)))} />
+                  <span>to</span>
+                  <input aria-label={`${label} end`} type="time" className="input !w-28" value={sp[1] === "24:00" ? "23:59" : sp[1]} onChange={(e) => setDay(d, spans.map((x, j) => (j === i ? [x[0], e.target.value] : x)))} />
+                  {spans.length > 1 && (
+                    <button className="text-stone-400 hover:text-red-600" aria-label="Remove hours" onClick={() => setDay(d, spans.filter((_, j) => j !== i))}>
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+              {on && (
+                <button className="text-xs text-brand-600 hover:underline" onClick={() => setDay(d, [...spans, ["18:00", "20:00"]])}>
+                  + add hours
+                </button>
+              )}
+              {!on && <span className="text-xs text-stone-400">No scheduled work</span>}
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="text-sm">
+          <span className="label">Break between tasks (minutes)</span>
+          <input className="input" type="number" min={0} max={120} value={draft.transition_min} onChange={(e) => setDraft({ ...draft, transition_min: Number(e.target.value) })} />
+        </label>
+        <label className="text-sm">
+          <span className="label">Most task time per day (minutes, empty = no limit)</span>
+          <input className="input" type="number" min={15} value={draft.daily_cap_min ?? ""} onChange={(e) => setDraft({ ...draft, daily_cap_min: e.target.value ? Number(e.target.value) : null })} />
+        </label>
+        <label className="text-sm">
+          <span className="label">Shortest work session when splitting (minutes)</span>
+          <input className="input" type="number" min={15} value={draft.default_min_session} onChange={(e) => setDraft({ ...draft, default_min_session: Number(e.target.value) })} />
+        </label>
+        <label className="text-sm">
+          <span className="label">Plan this many days ahead</span>
+          <input className="input" type="number" min={7} max={180} value={draft.horizon_days} onChange={(e) => setDraft({ ...draft, horizon_days: Number(e.target.value) })} />
+        </label>
+      </div>
+      {msg && <div className="mt-3 text-xs text-stone-600 dark:text-stone-300">{msg}</div>}
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   return (
     <Shell>
@@ -302,6 +403,7 @@ export default function SettingsPage() {
         <div className="mx-auto max-w-4xl space-y-4 p-4">
           <h1 className="text-lg font-semibold">Calendars & settings</h1>
           <Calendars />
+          <Scheduling />
           <Profile />
           <Categories />
           <Data />

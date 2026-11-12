@@ -84,6 +84,70 @@ export interface Task {
   depends_on: string[];
   blocking: string[];
   overdue: boolean;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  schedule_status: "scheduled" | "partial" | "unscheduled" | "late" | null;
+  at_risk: boolean;
+  score: number | null;
+}
+
+export interface BlockReason {
+  score?: number;
+  parts?: Record<string, number>;
+  why?: string[];
+  bound_by?: string;
+}
+
+export interface Block {
+  id: string;
+  task_id: string;
+  title: string;
+  priority: Priority;
+  category_id: string | null;
+  color: string | null;
+  start: string;
+  end: string;
+  session_index: number;
+  session_count: number;
+  locked: boolean;
+  reason: BlockReason;
+}
+
+export interface PlanWarning {
+  kind: "cannot_meet_deadline" | "will_miss_soft_deadline" | "at_risk" | "unscheduled" | "blocked_by_prerequisite" | "locked_conflict" | "no_slot_long_enough";
+  task_id: string | null;
+  message: string;
+  data: Record<string, unknown>;
+}
+
+export interface Overload {
+  shortfall_min: number;
+  message: string;
+  defer: { task_id: string; title: string; minutes: number; score: number }[];
+  feasible_after_defer: boolean;
+}
+
+export interface Schedule {
+  run: { id: string; created_at: string; trigger: string; duration_ms: number; restored_from_id: string | null; block_count: number } | null;
+  blocks: Block[];
+  warnings: PlanWarning[];
+  overload: Overload | null;
+  days: { date: string; work_min: number; free_min: number; planned_min: number }[];
+  dirty: boolean;
+  can_undo: boolean;
+}
+
+export interface ScheduleSettings {
+  timezone: string;
+  work_hours: Record<string, [string, string][]>;
+  horizon_days: number;
+  transition_min: number;
+  daily_cap_min: number | null;
+  default_min_session: number;
+  freeze_min: number;
+  risk_slack_min: number;
+  grid_min: number;
+  weights: Record<string, number>;
 }
 
 export interface TaskEvent {

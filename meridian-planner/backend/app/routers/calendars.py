@@ -54,6 +54,9 @@ def patch_calendar(cid: uuid.UUID, body: CalendarPatch, user: User = Depends(cur
         cal.sync_token = None  # newly shown calendar needs a full sync
     for k, v in fields.items():
         setattr(cal, k, v)
+    if {"selected", "blocks_time"} & set(fields):
+        user.schedule_dirty_at = datetime.now(timezone.utc)
+        user.schedule_dirty_reason = f"calendar \"{cal.summary}\" settings changed"
     db.commit()
     return cal
 
