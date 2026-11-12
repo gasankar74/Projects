@@ -168,11 +168,13 @@ def production_problems() -> list[str]:
     if s.dev_login_enabled:
         out.append("MERIDIAN_DEV_LOGIN_ENABLED must be false")
     if not s.cookie_secure:
-        out.append("MERIDIAN_COOKIE_SECURE must be true (serve the app over HTTPS, e.g. Tailscale)")
+        out.append("MERIDIAN_COOKIE_SECURE must be true (serve the app over HTTPS)")
     if not s.token_encryption_keys.strip():
         out.append("MERIDIAN_TOKEN_ENCRYPTION_KEYS must be set")
     if not s.frontend_url.startswith("https://"):
         out.append("MERIDIAN_FRONTEND_URL must be an https:// address")
+    if not s.allowed_emails.strip():
+        out.append("MERIDIAN_ALLOWED_EMAILS must list the Google addresses allowed to sign in")
     if s.ai_provider == "claude" and not s.anthropic_api_key:
         out.append("MERIDIAN_AI_PROVIDER=claude needs MERIDIAN_ANTHROPIC_API_KEY")
     return out

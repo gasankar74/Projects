@@ -1,5 +1,7 @@
+import logging
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -16,6 +18,8 @@ from ..security import create_session, current_user, destroy_session, encrypt, s
 from ..services import google as g
 from ..services.accounts import get_or_create_user
 from ..services.calendar_sync import sync_account
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 PKCE_COOKIE = "meridian_pkce"
@@ -76,12 +80,22 @@ def google_callback(
     if data["mode"] == "connect" and signed_in:
         user = signed_in
     else:
+        if not sign_in_allowed(db, email, sub):
+            log.warning("Refused Google sign-in for an address not on MERIDIAN_ALLOWED_EMAILS")
+            msg = quote("That Google account isn't allowed to sign in to this Meridian server.")
+            resp = RedirectResponse(f"{s.frontend_url}/login?error={msg}")
+            resp.delete_cookie(PKCE_COOKIE, path="/")
+            return resp
         tz = data.get("tz")
         try:
             ZoneInfo(tz) if tz else None
         except Exception:
             tz = None
-        user, _ = get_or_create_user(db, email, info.get("name", ""), google_sub=sub, tz=tz)
+        # A Google account connected from Settings signs in to the user who connected it.
+        owner = db.scalar(select(GoogleAccount.user_id).where(GoogleAccount.google_sub == sub).limit(1))
+        user = db.get(User, owner) if owner else None
+        if user is None:
+            user, _ = get_or_create_user(db, email, info.get("name", ""), google_sub=sub, tz=tz)
 
     acct = db.scalar(select(GoogleAccount).where(GoogleAccount.user_id == user.id, GoogleAccount.google_sub == sub))
     if acct is None:
@@ -108,6 +122,14 @@ def google_callback(
         db.add(AuditLog(user_id=user.id, action="signed_in", detail={"method": "google", "user_agent": request.headers.get("user-agent", "")[:200]}))
         db.commit()
     return resp
+
+
+def sign_in_allowed(db: Session, email: str, sub: str) -> bool:
+    """With MERIDIAN_ALLOWED_EMAILS set, only those addresses, or Google accounts a signed-in user already connected, may sign in."""
+    allowed = {e.strip().lower() for e in get_settings().allowed_emails.split(",") if e.strip()}
+    if not allowed or (email or "").lower() in allowed:
+        return True
+    return db.scalar(select(GoogleAccount.id).where(GoogleAccount.google_sub == sub).limit(1)) is not None
 
 
 class DevLogin(BaseModel):

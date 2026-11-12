@@ -59,15 +59,17 @@ def test_body_size_cap_and_headers(authed):
 
 def test_production_refuses_unsafe_settings():
     s = get_settings()
-    saved = (s.env, s.dev_login_enabled, s.cookie_secure, s.frontend_url)
+    saved = (s.env, s.dev_login_enabled, s.cookie_secure, s.frontend_url, s.allowed_emails)
     try:
         s.env = "production"
         problems = production_problems()
         assert any("DEV_LOGIN" in p for p in problems) and any("COOKIE_SECURE" in p for p in problems) and any("https" in p for p in problems)
-        s.dev_login_enabled, s.cookie_secure, s.frontend_url = False, True, "https://planner.example.ts.net"
+        assert any("ALLOWED_EMAILS" in p for p in problems)
+        s.dev_login_enabled, s.cookie_secure, s.frontend_url = False, True, "https://planner.example.net"
+        s.allowed_emails = "you@example.com"
         assert production_problems() == []
     finally:
-        s.env, s.dev_login_enabled, s.cookie_secure, s.frontend_url = saved
+        s.env, s.dev_login_enabled, s.cookie_secure, s.frontend_url, s.allowed_emails = saved
 
 
 def test_healthz_reports_db_and_worker(client):

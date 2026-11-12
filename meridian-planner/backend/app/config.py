@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     session_days: int = 30
     cookie_secure: bool = False
 
+    # Comma-separated Google addresses allowed to sign in (e.g. "you@gmail.com,you@firm.com"). Empty means anyone
+    # with a Google account can create an account: fine on a private network, required in production.
+    # Extra Google accounts connected from Settings by a signed-in user can sign in too.
+    allowed_emails: str = ""
+
     # Lets you sign in with just an email on a local machine, without Google. Never enable in production.
     dev_login_enabled: bool = False
 

@@ -22,6 +22,17 @@ tailscale serve status                   # shows the address; use it below as AP
 
 Only devices signed in to your tailnet can open it. Install Tailscale on your phone and laptop to use Meridian away from home.
 
+### Or: your own domain through Nginx Proxy Manager
+
+If you already run Nginx Proxy Manager (NPM) with a domain, use it instead of `tailscale serve`:
+
+1. Put `MERIDIAN_WEB_BIND=<server LAN address>` (and `MERIDIAN_WEB_PORT=3001` if 3000 is taken) in the top-level `.env`, so the proxy can reach the web app.
+2. DNS: an `A` record for the name (e.g. `planner.example.net`) pointing at your public IP, with port 443 forwarded to NPM. For a private-only address, point it at a LAN or Tailscale address and use a DNS challenge instead.
+3. NPM, **Proxy Hosts > Add Proxy Host**: the domain name; scheme `http`; forward host = the LAN address; port = the web port; tick **Block Common Exploits**. **SSL** tab: request a new Let's Encrypt certificate, tick **Force SSL**, **HTTP/2** and **HSTS**. **Advanced** tab: `client_max_body_size 6m;` (CSV imports).
+4. APP_URL is then `https://planner.example.net`. Only the web app goes through the proxy; the API and database stay unreachable from the network.
+
+A public address means the sign-in page is on the internet: `MERIDIAN_ALLOWED_EMAILS` (below, required in production) decides who can get in, and sign-in attempts are rate limited. Google's instant calendar updates can then use `MERIDIAN_PUBLIC_URL=https://planner.example.net/api`.
+
 ### Settings
 
 ```bash
@@ -39,11 +50,12 @@ In `backend/.env` set:
 | `MERIDIAN_FRONTEND_URL` | APP_URL |
 | `MERIDIAN_GOOGLE_REDIRECT_URI` | APP_URL + `/api/auth/google/callback` |
 | `MERIDIAN_GOOGLE_CLIENT_ID`, `..._SECRET` | from Google Cloud (below) |
+| `MERIDIAN_ALLOWED_EMAILS` | the Google addresses allowed to sign in, comma-separated (see Users) |
 | `MERIDIAN_DEV_LOGIN_ENABLED` | `false` (production forces this anyway) |
 | `MERIDIAN_VAPID_PUBLIC_KEY`, `..._PRIVATE_KEY` | output of `docker compose run --rm api python -m app.cli vapid` (browser notifications) |
 | `MERIDIAN_SMTP_HOST` etc. | optional, for email alerts and the daily digest (below) |
 
-Production mode refuses to start if dev login is on, cookies aren't marked secure, the app address isn't HTTPS, or the encryption key is missing. The production Compose file sets `MERIDIAN_ENV=production`, secure cookies and JSON logs for you.
+Production mode refuses to start if no allowed addresses are listed, dev login is on, cookies aren't marked secure, the app address isn't HTTPS, or the encryption key is missing. The production Compose file sets `MERIDIAN_ENV=production`, secure cookies and JSON logs for you.
 
 **Google Cloud.** Create an OAuth client (Web application) with the redirect URI above, enable the Google Calendar API, and set the OAuth consent screen's publishing status to **In production** (unverified is fine for personal use; in Testing mode Google expires calendar access every 7 days).
 
@@ -76,6 +88,15 @@ curl -s http://127.0.0.1:8000/healthz                                       # {"
 Database migrations run automatically when the API starts. Open APP_URL, sign in with Google, then in **Calendars & settings** choose your task calendar, and turn on browser notifications (and the digest, if you set up email).
 
 Tip: `alias mp='docker compose -f /opt/meridian-planner/docker-compose.yml -f /opt/meridian-planner/docker-compose.prod.yml'`.
+
+### Users
+
+Each person gets their own separate account: their own tasks, calendars, plan, assistant and settings; nobody sees anyone else's data. There is no shared workspace.
+
+- **Add someone:** add their Google address to `MERIDIAN_ALLOWED_EMAILS` in `backend/.env`, run `mp up -d`, and send them the address. They sign in with Google, then connect their calendars.
+- **One person, several Google accounts** (personal and work): list only the main address. After signing in, connect the others in **Calendars & settings > Connect Google account**; those accounts can then also be used to sign in, into the same Meridian account.
+- **Remove someone:** take their address off the list and `mp up -d` so they can't sign in again; they (or you, signed in as them) can delete the account from Settings, which also removes Meridian's blocks from their Google Calendar.
+- **Google's side:** a personal OAuth app that hasn't been verified by Google shows an "unverified app" warning (click Advanced > continue) and is limited to 100 users, which is plenty.
 
 ## 2. Updating
 

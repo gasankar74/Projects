@@ -19,6 +19,7 @@ Date: 2026-11-12. Scope: the API (FastAPI), worker, web app (Next.js), Docker Co
 | 11 | The HTTP client logged every Google request URL at INFO (calendar ids, sync tokens). | Data in logs | Lowered to WARNING. Logs can be JSON (`MERIDIAN_LOG_FORMAT=json`), rotated by Docker. |
 | 12 | New channels leave the server: browser push goes through the browser vendor's push service and email through Gmail. | Confidentiality | Confidential tasks are never named outside the app (“a confidential task”), in alerts and the digest. Push payloads are end-to-end encrypted (Web Push); subscription endpoints must be HTTPS and are dropped when the browser says they're gone. |
 | 13 | Audit trail missed sign-ins, sign-outs and settings changes. | Accountability | Now recorded, and shown with task history (by you, the assistant or the scheduler) on the Activity page. |
+| 14 | Anyone with a Google account could create an account on a publicly reachable server. | Unauthorised use | `MERIDIAN_ALLOWED_EMAILS` lists who may sign in; required in production. Accounts a user connected from Settings can sign in to that user. |
 
 ## Checked, no change needed
 
@@ -35,9 +36,9 @@ Date: 2026-11-12. Scope: the API (FastAPI), worker, web app (Next.js), Docker Co
 
 ## Remaining risks and recommendations
 
-- **Tailscale is the perimeter.** Keep the app on `tailscale serve` (tailnet only). If you use Funnel for Google's webhook, publish only that path.
+- **The perimeter.** With `tailscale serve` only your tailnet can reach the app. With a public domain through a reverse proxy, the allow-list and rate limits are what stand between the internet and the sign-in; keep the server and NPM updated.
 - **Rate-limit counters are in memory.** They reset when the API restarts, and assume one API process (how Compose runs it).
 - **CSP allows inline scripts**, which Next.js needs for hydration. A nonce-based policy is possible later.
 - **Backups hold the whole database** (Google tokens inside are still encrypted with the app key). Keep the backup passphrase and `.env` files in a password manager, not next to the backups.
 - **The Gmail app password** sits in `backend/.env` (mode 600). Revoke it in your Google account if the server is ever compromised.
-- **Single user by design.** Team features stay switched off; turning them on would need a review of sharing rules first.
+- **Several users, no sharing.** Each allowed person has a fully separate account; there are no shared tasks or projects, so there are no sharing rules to get wrong.
