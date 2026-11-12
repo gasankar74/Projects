@@ -100,6 +100,14 @@ class GoogleClient:
             raise GoogleError(r.status_code, r.text)
         return r.json()
 
+    def revoke(self, token: str) -> bool:
+        """Revoke a refresh (or access) token so Google forgets this app's access. Best effort."""
+        try:
+            r = self.http.post(self.s.google_revoke_url, data={"token": token})
+            return r.status_code == 200
+        except httpx.HTTPError:
+            return False
+
     def userinfo(self, access_token: str) -> dict:
         r = self.http.get(self.s.google_userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
         if r.status_code != 200:

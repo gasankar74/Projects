@@ -5,21 +5,28 @@
   inside a per-minute budget.
 - Every 10 minutes: sync every connected Google account (the fallback when push isn't set up or a notification
   was missed), top up repeating tasks, and open or renew push channels.
-- Every hour: replan everyone (time moves on), reconcile task blocks in Google, generate repeating tasks.
+- Every minute: notifications (deadline risks, sync failures, upcoming blocks) through the app, browser push and
+  email, and the daily digest.
+- Every hour: replan everyone (time moves on), reconcile task blocks in Google, generate repeating tasks, drop
+  expired sessions and old read notifications.
+
+It records a heartbeat in the database (shown by /healthz) and touches HEARTBEAT_FILE for Docker's health check.
 """
 
 import logging
 import signal
 import time
+from pathlib import Path
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from .config import get_settings
 from .db import session_factory
-from .models import BlockEventLink, Calendar, GoogleAccount, ScheduleRun, User
-from .services import calendar_write, push, recurrence, scheduling
+from .logging_setup import setup_logging
+from .models import AppState, AuthSession, BlockEventLink, Calendar, GoogleAccount, ScheduleRun, User
+from .services import calendar_write, notify, push, recurrence, scheduling
 from .services.calendar_sync import sync_account
 from .services.google import GoogleClient
 
@@ -27,7 +34,20 @@ log = logging.getLogger("meridian.worker")
 SYNC_EVERY = timedelta(minutes=10)
 REFRESH_EVERY = timedelta(hours=1)
 PUSH_DEBOUNCE = timedelta(seconds=3)
+NOTIFY_EVERY = timedelta(minutes=1)
+HEARTBEAT_EVERY = timedelta(seconds=30)
+HEARTBEAT_FILE = Path("/tmp/meridian-worker-alive")
 NEVER = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _heartbeat(db, now: datetime) -> None:
+    row = db.get(AppState, "worker")
+    if row:
+        row.value = {"at": now.isoformat()}
+        row.updated_at = now
+    else:
+        db.add(AppState(key="worker", value={"at": now.isoformat()}, updated_at=now))
+    db.commit()
 
 
 def _write_budget(state: dict, now: datetime) -> int:
@@ -39,6 +59,14 @@ def _write_budget(state: dict, now: datetime) -> int:
 
 def tick(db, client: GoogleClient | None, state: dict, now: datetime | None = None) -> None:
     now = now or datetime.now(timezone.utc)
+
+    if now - state.get("heartbeat", NEVER) >= HEARTBEAT_EVERY:
+        state["heartbeat"] = now
+        try:
+            _heartbeat(db, now)
+        except Exception:
+            db.rollback()
+            log.exception("heartbeat failed")
 
     # Repeating tasks first, so a replan in this tick already sees new occurrences.
     if now - state.get("generated", NEVER) >= SYNC_EVERY:
@@ -100,8 +128,19 @@ def tick(db, client: GoogleClient | None, state: dict, now: datetime | None = No
             db.rollback()
             log.exception("push channel upkeep failed")
 
+    if now - state.get("notified", NEVER) >= NOTIFY_EVERY:
+        state["notified"] = now
+        notify.tick(db, now)
+
     if now - state.get("refreshed", NEVER) >= REFRESH_EVERY:
         state["refreshed"] = now
+        try:
+            db.execute(delete(AuthSession).where(AuthSession.expires_at < now))
+            db.commit()
+            notify.purge(db, now)
+        except Exception:
+            db.rollback()
+            log.exception("clean-up failed")
         for user in db.scalars(select(User)).all():
             last = db.scalars(select(ScheduleRun.created_at).where(ScheduleRun.user_id == user.id).order_by(ScheduleRun.created_at.desc()).limit(1)).first()
             if last is None or now - last >= REFRESH_EVERY:
@@ -116,7 +155,7 @@ def tick(db, client: GoogleClient | None, state: dict, now: datetime | None = No
 
 
 def run_forever() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    setup_logging()
     stop = {"now": False}
     signal.signal(signal.SIGTERM, lambda *_: stop.update(now=True))
     signal.signal(signal.SIGINT, lambda *_: stop.update(now=True))
@@ -131,5 +170,9 @@ def run_forever() -> None:
             log.exception("worker tick failed")
         finally:
             db.close()
+        try:
+            HEARTBEAT_FILE.touch()
+        except OSError:
+            pass
         time.sleep(2)
     log.info("worker stopped")

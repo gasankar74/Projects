@@ -21,6 +21,7 @@ AI never calls into this module to enforce anything; it can only propose changes
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import math
 from dataclasses import asdict, dataclass, field, replace
@@ -238,6 +239,38 @@ def _subtract(spans: list[Span], cut: Span) -> list[Span]:
     return out
 
 
+def _subtract_many(spans: list[Span], cuts: list[Span]) -> list[Span]:
+    """Same result as applying _subtract for each cut in turn, in one sweep: O((spans + cuts) log cuts)."""
+    if not cuts:
+        return list(spans)
+    merged: list[Span] = []
+    for cs, ce in sorted(cuts):
+        if merged and cs <= merged[-1][1]:
+            if ce > merged[-1][1]:
+                merged[-1] = (merged[-1][0], ce)
+        else:
+            merged.append((cs, ce))
+    out: list[Span] = []
+    j = 0
+    for s, e in sorted(spans):
+        cur = s
+        while j < len(merged) and merged[j][1] <= cur:
+            j += 1
+        k = j
+        while k < len(merged) and merged[k][0] < e:
+            cs, ce = merged[k]
+            if cs > cur:
+                out.append((cur, cs))
+            if ce > cur:
+                cur = ce
+            if cur >= e:
+                break
+            k += 1
+        if cur < e:
+            out.append((cur, e))
+    return out
+
+
 def _intersect(a: list[Span], b: list[Span]) -> list[Span]:
     out: list[Span] = []
     i = j = 0
@@ -420,13 +453,13 @@ class _Planner:
             self.day_used[(t.profile_id, d)] -= b.minutes
 
     def _rebuild_free(self) -> None:
-        free = list(self.free_after_events)
+        cuts = []
         for b in self.blocks:
             t = self.tasks.get(b.task_id)
             bb = t.buffer_before_min if t else 0
             ba = t.buffer_after_min if t else 0
-            free = _subtract(free, (b.start - timedelta(minutes=bb), b.end + timedelta(minutes=ba + self.st.transition_min)))
-        self.free = free
+            cuts.append((b.start - timedelta(minutes=bb), b.end + timedelta(minutes=ba + self.st.transition_min)))
+        self.free = _subtract_many(self.free_after_events, cuts)
 
     # -- stage 2: score -------------------------------------------------------------------------------------
 
@@ -688,17 +721,24 @@ class _Planner:
                 break
         self.eff = eff
         key = lambda tid: (-eff[tid][0], eff[tid][1], self.tasks[tid].title, tid)  # noqa: E731
+        # Kahn's algorithm with a heap: always take the most pressing task whose prerequisites are all placed.
+        waiting_on = {tid: len(deps) for tid, deps in pending.items()}
+        dependents: dict[str, list[str]] = {}
+        for tid, deps in pending.items():
+            for p in deps:
+                dependents.setdefault(p, []).append(tid)
         order: list[str] = []
-        ready = sorted([t for t, deps in pending.items() if not deps], key=key)
+        ready = [(key(t), t) for t, n in waiting_on.items() if n == 0]
+        heapq.heapify(ready)
         done: set[str] = set()
         while ready:
-            tid = ready.pop(0)
+            _, tid = heapq.heappop(ready)
             order.append(tid)
             done.add(tid)
-            for t, deps in pending.items():
-                if t not in done and t not in ready and tid in deps and deps <= done:
-                    ready.append(t)
-            ready.sort(key=key)
+            for t in dependents.get(tid, ()):
+                waiting_on[t] -= 1
+                if waiting_on[t] == 0:
+                    heapq.heappush(ready, (key(t), t))
         # Anything left is in a cycle (the API prevents this); place it anyway, by score.
         order += sorted([t for t in pending if t not in done], key=key)
         return order
@@ -991,11 +1031,21 @@ class _Planner:
             {tid for tid, r in self.results.items() if r.start is None or r.start < latest},
             key=lambda tid: (self.results[tid].score, tid),
         )
+        # Minutes each candidate would free before the latest failing deadline (its planned work there, or for a
+        # failing task the part that doesn't fit). Deferring less than the shortfall can't help, so the expensive
+        # full re-plan is only tried once enough is set aside.
+        failing_short = {w.task_id: w.data.get("shortfall_min", 0) for w in failing}
+        frees = {
+            tid: sum(b.minutes for b in self.task_blocks.get(tid, []) if b.start < latest) + failing_short.get(tid, 0)
+            for tid in cands
+        }
         deferred: list[str] = []
         feasible = False
         for tid in cands:
+            if frees[tid] <= 0:
+                continue  # deferring it frees nothing before the deadline
             deferred.append(tid)
-            if _simulate_ok(self.snap, deferred):
+            if sum(frees[x] for x in deferred) >= shortfall and _simulate_ok(self.snap, deferred):
                 feasible = True
                 break
             if len(deferred) >= 12:
@@ -1003,7 +1053,7 @@ class _Planner:
         if feasible:  # trim to a minimal set
             for tid in list(deferred):
                 trial = [x for x in deferred if x != tid]
-                if trial and _simulate_ok(self.snap, trial):
+                if trial and sum(frees[x] for x in trial) >= shortfall and _simulate_ok(self.snap, trial):
                     deferred = trial
         return {
             "shortfall_min": shortfall,

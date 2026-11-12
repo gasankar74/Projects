@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Calendar, CalendarEvent, Category, ScheduledBlock, ScheduleRun, Task, User
+from ..models import AuditLog, Calendar, CalendarEvent, Category, ScheduledBlock, ScheduleRun, Task, User
 from ..scheduler.engine import DAY_NAMES, TaskInput
 from ..security import current_user
 from ..services import scheduling as sched
@@ -283,7 +283,11 @@ def get_settings(user: User = Depends(current_user)):
 
 @router.patch("/settings")
 def patch_settings(body: SettingsPatch, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    return sched.update_settings(db, user, body.model_dump(exclude_unset=True))
+    patch = body.model_dump(exclude_unset=True)
+    out = sched.update_settings(db, user, patch)
+    db.add(AuditLog(user_id=user.id, action="schedule_settings", detail={"changed": sorted(patch)}))
+    db.commit()
+    return out
 
 
 @router.get("/tasks/{task_id}/why")

@@ -10,3 +10,4 @@ httpx==0.28.1
 python-dateutil>=2.9
 ortools==9.15.6755
 anthropic==2.8.0
+pywebpush==2.5.0

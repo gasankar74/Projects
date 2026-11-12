@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { NotificationSettings } from "@/components/NotificationSettings";
 import { Shell, useApp } from "@/components/Shell";
 import { api, bus, useApi } from "@/lib/api";
 import type { AiStatus, Calendar, GoogleAccount, Profile as SchedProfile, ScheduleSettings, WriteStatus } from "@/lib/types";
@@ -346,6 +348,14 @@ function Data() {
   const [msg, setMsg] = useState<string | null>(null);
   return (
     <Card title="Your data">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Link className="btn-primary" href="/import">
+          Import from Motion (CSV)
+        </Link>
+        <Link className="btn" href="/activity">
+          Activity log and sessions
+        </Link>
+      </div>
       <div className="flex flex-wrap gap-2">
         <a className="btn" href="/api/export/json">
           Export everything (JSON)
@@ -379,7 +389,9 @@ function Data() {
         <button
           className="text-sm text-red-600 hover:underline"
           onClick={async () => {
-            const typed = prompt(`This permanently deletes your account, tasks and calendar connections. Type your email (${me?.email}) to confirm.`);
+            const typed = prompt(
+              `This permanently deletes your account, tasks and calendar connections. Task blocks Meridian added to your Google Calendar are removed and its Google access is revoked. Your own calendar events are not touched.\n\nType your email (${me?.email}) to confirm.`,
+            );
             if (!typed) return;
             try {
               await api("/account/delete", { method: "POST", json: { confirm_email: typed } });
@@ -714,6 +726,7 @@ export default function SettingsPage() {
           <Profiles />
           <Profile />
           <Assistant />
+          <NotificationSettings />
           <Categories />
           <Data />
         </div>

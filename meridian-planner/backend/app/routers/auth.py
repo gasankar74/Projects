@@ -105,6 +105,8 @@ def google_callback(
     resp.delete_cookie(PKCE_COOKIE, path="/")
     if not signed_in or data["mode"] != "connect":
         create_session(db, user, resp, request.headers.get("user-agent", ""))
+        db.add(AuditLog(user_id=user.id, action="signed_in", detail={"method": "google", "user_agent": request.headers.get("user-agent", "")[:200]}))
+        db.commit()
     return resp
 
 
@@ -133,6 +135,10 @@ def auth_config():
 
 @router.post("/logout", status_code=204)
 def logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    user = _user_or_none(request, db)
+    if user:
+        db.add(AuditLog(user_id=user.id, action="signed_out"))
+        db.commit()
     destroy_session(db, request, response)
     response.status_code = 204
     return response
@@ -151,5 +157,8 @@ def update_me(body: UserUpdate, user: User = Depends(current_user), db: Session 
                 user.schedule_dirty_at = datetime.now(timezone.utc)
                 user.schedule_dirty_reason = f"time zone changed to {v}"
             setattr(user, k, v)
+    changed = sorted(k for k, v in body.model_dump(exclude_unset=True).items() if v is not None)
+    if changed:
+        db.add(AuditLog(user_id=user.id, action="profile_updated", detail={"changed": changed, **({"ai_opt_in": user.ai_opt_in} if "ai_opt_in" in changed else {})}))
     db.commit()
     return user
