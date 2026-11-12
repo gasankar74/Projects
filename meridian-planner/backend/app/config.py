@@ -35,6 +35,23 @@ class Settings(BaseSettings):
     sync_past_days: int = 30
     sync_future_days: int = 180
 
+    # Public HTTPS address of the API (e.g. a Tailscale Funnel URL). When set, the app asks Google for push
+    # notifications at {public_url}/webhooks/google; when empty, calendars are polled every 10 minutes.
+    public_url: str = ""
+    # Most Google Calendar writes per minute (stays well inside Google's per-user quota).
+    google_writes_per_min: int = 120
+
+    # AI assistant. "ollama" (default, runs on your own machine), "claude" (Anthropic API, needs a key) or "none".
+    # The scheduler never depends on it.
+    ai_provider: str = "ollama"
+    ollama_url: str = "http://localhost:11434"
+    ollama_model: str = "qwen3:8b"
+    # Let qwen3 think before answering (slower, sometimes better at multi-step requests).
+    ollama_think: bool = False
+    anthropic_api_key: str = ""
+    claude_model: str = "claude-opus-5-5"
+    ai_timeout_s: float = 120.0
+
 
 @lru_cache
 def get_settings() -> Settings:

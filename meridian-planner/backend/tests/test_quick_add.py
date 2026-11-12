@@ -110,3 +110,17 @@ def test_past_deadline_is_kept_so_it_shows_overdue():
     r = parse("File response to motion by yesterday, urgent", NOW)
     assert r.title == "File response to motion"
     assert r.deadline.date().isoformat() == "2026-11-11"
+
+
+def test_completion_based_repeat():
+    r = parse("Water office plants every 2 weeks after it's done, 15 minutes", NOW)
+    assert r.title == "Water office plants"
+    assert r.recurrence["kind"] == "after_completion" and r.recurrence["every"] == 2 and r.recurrence["unit"] == "weeks"
+    assert r.duration_min == 15
+
+
+def test_business_day_repeats_step_around_holidays():
+    r = parse("Trust reconciliation on the last business day of every month", NOW)
+    assert r.recurrence["adjust"] == "previous"
+    r = parse("Payroll on the first business day of every month", NOW)
+    assert r.recurrence["adjust"] == "next"

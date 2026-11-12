@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 Priority = Literal["urgent", "high", "medium", "low"]
 Status = Literal["inbox", "todo", "in_progress", "blocked", "done", "cancelled"]
+AiAccess = Literal["default", "hidden", "allowed"]
 
 
 class ORM(BaseModel):
@@ -44,6 +45,8 @@ class CategoryIn(BaseModel):
     color: str = "#6366f1"
     position: int = 0
     default_priority: Priority = "medium"
+    scheduling_profile_id: uuid.UUID | None = None
+    ai_access: AiAccess = "default"
 
 
 class CategoryPatch(BaseModel):
@@ -51,6 +54,8 @@ class CategoryPatch(BaseModel):
     color: str | None = None
     position: int | None = None
     default_priority: Priority | None = None
+    scheduling_profile_id: uuid.UUID | None = None
+    ai_access: AiAccess | None = None
 
 
 class CategoryOut(ORM):
@@ -59,6 +64,8 @@ class CategoryOut(ORM):
     color: str
     position: int
     default_priority: str
+    scheduling_profile_id: uuid.UUID | None = None
+    ai_access: str = "default"
     open_count: int = 0
 
 
@@ -71,10 +78,14 @@ class ProjectIn(BaseModel):
     color: str | None = None
     client: str | None = None
     notes: str | None = None
+    area_id: uuid.UUID | None = None
+    start_date: date | None = None
+    position: int = 0
+    ai_access: AiAccess = "default"
 
 
 class ProjectPatch(BaseModel):
-    name: str | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
     category_id: uuid.UUID | None = None
     status: Literal["active", "on_hold", "done", "archived"] | None = None
     priority: Priority | None = None
@@ -82,6 +93,10 @@ class ProjectPatch(BaseModel):
     color: str | None = None
     client: str | None = None
     notes: str | None = None
+    area_id: uuid.UUID | None = None
+    start_date: date | None = None
+    position: int | None = None
+    ai_access: AiAccess | None = None
 
 
 class ProjectOut(ORM):
@@ -94,8 +109,15 @@ class ProjectOut(ORM):
     color: str | None
     client: str | None
     notes: str | None
+    area_id: uuid.UUID | None = None
+    start_date: date | None = None
+    position: int = 0
+    template_id: uuid.UUID | None = None
+    ai_access: str = "default"
     open_count: int = 0
     done_count: int = 0
+    open_min: int = 0
+    tracked_min: int = 0
 
 
 class Window(BaseModel):
@@ -149,11 +171,16 @@ class TaskFields(BaseModel):
     buffer_after_min: int | None = Field(default=None, ge=0, le=480)
     energy: Literal["high", "medium", "low"] | None = None
     calendar_id: uuid.UUID | None = None
+    scheduling_profile_id: uuid.UUID | None = None
+    location: str | None = Field(default=None, max_length=500)
+    travel_min: int | None = Field(default=None, ge=0, le=480)
     recurrence: dict | None = None
     tags: list[str] | None = None
     links: list[Link] | None = None
     confidential: bool | None = None
     ai_allowed: bool | None = None
+    board_position: int | None = None
+    is_milestone: bool | None = None
 
     @field_validator("tags")
     @classmethod
@@ -207,11 +234,18 @@ class TaskOut(ORM):
     buffer_after_min: int
     energy: str | None
     calendar_id: uuid.UUID | None
+    scheduling_profile_id: uuid.UUID | None = None
+    location: str | None = None
+    travel_min: int = 0
     recurrence: dict | None
+    series_id: uuid.UUID | None = None
+    occurrence_due: date | None = None
     tags: list[str]
     links: list
     confidential: bool
     ai_allowed: bool
+    board_position: int = 0
+    is_milestone: bool = False
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
@@ -220,6 +254,12 @@ class TaskOut(ORM):
     depends_on: list[uuid.UUID] = []
     blocking: list[uuid.UUID] = []
     overdue: bool = False
+    # From the current plan (None when the task isn't scheduled).
+    scheduled_start: datetime | None = None
+    scheduled_end: datetime | None = None
+    schedule_status: str | None = None  # scheduled | partial | unscheduled | late
+    at_risk: bool = False
+    score: float | None = None
 
 
 class TaskList(BaseModel):
@@ -282,6 +322,7 @@ class CalendarOut(ORM):
     writable: bool
     last_synced_at: datetime | None
     last_error: str | None
+    push_enabled: bool = False
 
 
 class CalendarPatch(BaseModel):
@@ -313,3 +354,61 @@ class EventOut(ORM):
 class BusyOut(BaseModel):
     start: datetime
     end: datetime
+
+
+class ProfileIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    color: str | None = None
+    work_hours: dict[str, list[list[str]]] = Field(default_factory=dict)
+    daily_cap_min: int | None = Field(default=None, ge=15, le=24 * 60)
+    position: int = 0
+
+
+class ProfilePatch(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    color: str | None = None
+    work_hours: dict[str, list[list[str]]] | None = None
+    daily_cap_min: int | None = Field(default=None, ge=15, le=24 * 60)
+    position: int | None = None
+
+
+class ProfileOut(ORM):
+    id: uuid.UUID
+    name: str
+    color: str | None
+    work_hours: dict
+    daily_cap_min: int | None
+    position: int
+
+
+class SeriesPatch(BaseModel):
+    """Changes to a repeating task. Template fields apply to future occurrences that haven't been started."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=500)
+    rule: dict | None = None
+    missed_policy: Literal["keep", "skip", "latest_only"] | None = None
+    generate_ahead_days: int | None = Field(default=None, ge=1, le=120)
+    active: bool | None = None
+    template: dict | None = None
+
+
+class SeriesOut(ORM):
+    id: uuid.UUID
+    title: str
+    template: dict
+    rule: dict
+    anchor: date
+    missed_policy: str
+    generate_ahead_days: int
+    active: bool
+    last_generated_due: date | None
+    generated_count: int
+    description: str = ""
+    upcoming: list[date] = []
+    open_count: int = 0
+
+
+class RulePreviewIn(BaseModel):
+    rule: dict
+    start: date | None = None
+    count: int = Field(default=6, ge=1, le=40)

@@ -99,7 +99,7 @@ def test_incremental_sync_handles_changes_and_cancellations(client, google):
     google.cancel_event(cal, "m2")
     google.put_event(cal, ev("m3", NOW + timedelta(hours=7), NOW + timedelta(hours=8), summary="New"))
     res = client.post("/calendars/sync").json()["results"][0]
-    assert res["ok"] and res["calendars"]["Personal"] == {"created": 1, "updated": 1, "cancelled": 1, "removed": 0, "full": False}
+    assert res["ok"] and res["calendars"]["Personal"] == {"created": 1, "updated": 1, "cancelled": 1, "removed": 0, "full": False, "moved": 0}
     events = client.get("/events", params={"start": iso(NOW), "end": iso(NOW + timedelta(days=1))}).json()
     assert [e["summary"] for e in events] == ["Mediation (moved)", "New"]
 

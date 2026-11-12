@@ -1,13 +1,14 @@
 """Categories and projects."""
 
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Category, Project, Task, User
+from ..models import Area, Category, Project, SchedulingProfile, Task, User
 from ..schemas import CategoryIn, CategoryOut, CategoryPatch, ProjectIn, ProjectOut, ProjectPatch
 from ..security import current_user
 from ..services.tasks import DONE_STATES
@@ -40,10 +41,19 @@ def list_categories(user: User = Depends(current_user), db: Session = Depends(ge
 def create_category(body: CategoryIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     if db.scalar(select(Category).where(Category.user_id == user.id, Category.name == body.name)):
         raise HTTPException(409, "A category with that name exists")
+    _check_profile(db, user, body.scheduling_profile_id)
     c = Category(user_id=user.id, **body.model_dump())
     db.add(c)
     db.commit()
     return c
+
+
+def _check_profile(db: Session, user: User, pid) -> None:
+    if pid is None:
+        return
+    p = db.get(SchedulingProfile, pid)
+    if not p or p.user_id != user.id:
+        raise HTTPException(422, "Scheduling profile not found")
 
 
 def _own_category(db: Session, user: User, cid: uuid.UUID) -> Category:
@@ -56,7 +66,12 @@ def _own_category(db: Session, user: User, cid: uuid.UUID) -> Category:
 @router.patch("/categories/{cid}", response_model=CategoryOut)
 def patch_category(cid: uuid.UUID, body: CategoryPatch, user: User = Depends(current_user), db: Session = Depends(get_db)):
     c = _own_category(db, user, cid)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    fields = body.model_dump(exclude_unset=True)
+    if "scheduling_profile_id" in fields:
+        _check_profile(db, user, fields["scheduling_profile_id"])
+        user.schedule_dirty_at = datetime.now(timezone.utc)
+        user.schedule_dirty_reason = f"category \"{c.name}\" hours changed"
+    for k, v in fields.items():
         setattr(c, k, v)
     db.commit()
     return c
@@ -83,11 +98,20 @@ def list_projects(include_archived: bool = False, user: User = Depends(current_u
             .group_by(Task.project_id)
         ).all()
     }
+    open_min = {
+        k: n
+        for k, n in db.execute(
+            select(Task.project_id, func.sum(Task.remaining_min))
+            .where(Task.user_id == user.id, Task.deleted_at.is_(None), Task.status.notin_(DONE_STATES))
+            .group_by(Task.project_id)
+        ).all()
+    }
     out = []
-    for p in db.scalars(q.order_by(Project.name)).all():
+    for p in db.scalars(q.order_by(Project.position, Project.name)).all():
         o = ProjectOut.model_validate(p)
         o.open_count = open_counts.get(p.id, 0)
         o.done_count = done_counts.get(p.id, 0)
+        o.open_min = int(open_min.get(p.id) or 0)
         out.append(o)
     return out
 
@@ -97,9 +121,17 @@ def _check_category(db: Session, user: User, cid):
         _own_category(db, user, cid)
 
 
+def _check_area(db: Session, user: User, aid):
+    if aid is not None:
+        a = db.get(Area, aid)
+        if not a or a.user_id != user.id:
+            raise HTTPException(422, "Area not found")
+
+
 @router.post("/projects", response_model=ProjectOut, status_code=201)
 def create_project(body: ProjectIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
     _check_category(db, user, body.category_id)
+    _check_area(db, user, body.area_id)
     p = Project(user_id=user.id, **body.model_dump())
     db.add(p)
     db.commit()
@@ -118,6 +150,10 @@ def patch_project(pid: uuid.UUID, body: ProjectPatch, user: User = Depends(curre
     p = _own_project(db, user, pid)
     fields = body.model_dump(exclude_unset=True)
     _check_category(db, user, fields.get("category_id"))
+    _check_area(db, user, fields.get("area_id"))
+    if any(k in fields for k in ("priority", "deadline")):
+        user.schedule_dirty_at = datetime.now(timezone.utc)
+        user.schedule_dirty_reason = f"project \"{p.name}\" changed"
     for k, v in fields.items():
         setattr(p, k, v)
     db.commit()

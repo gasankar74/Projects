@@ -9,7 +9,8 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import Calendar, Category, ChecklistItem, Project, Task, TaskDependency, TaskEvent, User
+from ..models import Calendar, Category, ChecklistItem, Project, SchedulingProfile, ScheduleRun, Task, TaskDependency, TaskEvent, User
+from . import recurrence as rec_service
 from ..schemas import TaskCreate, TaskFields, TaskOut
 
 DONE_STATES = ("done", "cancelled")
@@ -35,6 +36,11 @@ def _jsonable(v: Any) -> Any:
 
 def record(db: Session, task: Task, action: str, diff: dict | None = None, actor: str = "user") -> None:
     db.add(TaskEvent(user_id=task.user_id, task_id=task.id, actor=actor, action=action, diff=_jsonable(diff or {})))
+    # Every task change is a replan trigger (the worker debounces; an unchanged input hash skips the run).
+    owner = db.get(User, task.user_id)
+    if owner is not None:
+        owner.schedule_dirty_at = now_utc()
+        owner.schedule_dirty_reason = f"task {action}: {task.title}"[:200]
 
 
 def get_task(db: Session, user: User, task_id: uuid.UUID) -> Task:
@@ -55,6 +61,9 @@ def _check_owned(db: Session, user: User, model, obj_id: uuid.UUID | None, label
 def _validate(db: Session, user: User, task: Task) -> None:
     _check_owned(db, user, Category, task.category_id, "Category")
     _check_owned(db, user, Project, task.project_id, "Project")
+    _check_owned(db, user, SchedulingProfile, task.scheduling_profile_id, "Scheduling profile")
+    if task.recurrence is not None and not isinstance(task.recurrence, dict):
+        raise HTTPException(422, "recurrence must be an object")
     if task.calendar_id is not None:
         cal = db.get(Calendar, task.calendar_id)
         if not cal or cal.user_id != user.id:
@@ -117,6 +126,8 @@ def create_task(db: Session, user: User, data: TaskCreate, actor: str = "user", 
     for i, text in enumerate(data.checklist):
         db.add(ChecklistItem(task_id=task.id, text=text, position=i))
     record(db, task, "created", {k: v for k, v in fields.items() if v is not None}, actor)
+    if task.recurrence:
+        rec_service.attach_series(db, user, task)
     db.commit()
     db.refresh(task)
     return task
@@ -154,6 +165,10 @@ def update_task(db: Session, user: User, task: Task, patch: TaskFields, actor: s
     _apply_progress(task, fields, old_duration)
     _validate(db, user, task)
     record(db, task, "updated", diff, actor)
+    if "recurrence" in diff:
+        rec_service.attach_series(db, user, task)
+    if diff.get("status", {}).get("to") == "done":
+        rec_service.on_completed(db, user, task)
     db.commit()
     db.refresh(task)
     return task
@@ -170,6 +185,7 @@ def complete_task(db: Session, user: User, task: Task, actor: str = "user") -> T
     record(db, task, "completed", {"status": {"from": prev, "to": "done"}}, actor)
     for item in task.checklist:
         item.done = True
+    rec_service.on_completed(db, user, task)
     db.commit()
     db.refresh(task)
     return task
@@ -219,7 +235,28 @@ def add_dependency(db: Session, user: User, task: Task, depends_on_id: uuid.UUID
         db.commit()
 
 
-def to_out(db: Session, task: Task, deps: dict | None = None) -> TaskOut:
+def _plan_stats(db: Session, user_id: uuid.UUID) -> dict:
+    run = db.scalars(
+        select(ScheduleRun).where(ScheduleRun.user_id == user_id, ScheduleRun.applied.is_(True)).order_by(ScheduleRun.created_at.desc()).limit(1)
+    ).first()
+    return run.task_stats if run else {}
+
+
+def _parse_dt(v):
+    return datetime.fromisoformat(v) if isinstance(v, str) else v
+
+
+def _apply_stats(out: TaskOut, st: dict | None) -> None:
+    if not st or out.status in DONE_STATES:
+        return
+    out.scheduled_start = _parse_dt(st.get("start"))
+    out.scheduled_end = _parse_dt(st.get("finish"))
+    out.schedule_status = st.get("status")
+    out.at_risk = bool(st.get("at_risk"))
+    out.score = st.get("score")
+
+
+def to_out(db: Session, task: Task, deps: dict | None = None, stats: dict | None = None) -> TaskOut:
     if deps is None:
         depends_on = list(db.scalars(select(TaskDependency.depends_on_task_id).where(TaskDependency.task_id == task.id)))
         blocking = list(db.scalars(select(TaskDependency.task_id).where(TaskDependency.depends_on_task_id == task.id)))
@@ -230,6 +267,9 @@ def to_out(db: Session, task: Task, deps: dict | None = None) -> TaskOut:
     out.depends_on = depends_on
     out.blocking = blocking
     out.overdue = bool(task.deadline and task.status not in DONE_STATES and task.deadline < now_utc())
+    if stats is None:
+        stats = _plan_stats(db, task.user_id)
+    _apply_stats(out, stats.get(str(task.id)))
     return out
 
 
@@ -245,4 +285,5 @@ def bulk_out(db: Session, tasks: list[Task]) -> list[TaskOut]:
         ):
             on.setdefault(d.task_id, []).append(d.depends_on_task_id)
             blocking.setdefault(d.depends_on_task_id, []).append(d.task_id)
-    return [to_out(db, t, {"on": on, "blocking": blocking}) for t in tasks]
+    stats = _plan_stats(db, tasks[0].user_id) if tasks else {}
+    return [to_out(db, t, {"on": on, "blocking": blocking}, stats) for t in tasks]

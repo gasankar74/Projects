@@ -8,3 +8,5 @@ pydantic-settings==2.16.2
 cryptography==50.0.2
 httpx==0.28.1
 python-dateutil>=2.9
+ortools==9.15.6755
+anthropic==2.8.0
