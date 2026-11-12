@@ -1,9 +1,0 @@
-{
-  "name": "Aasha Planner",
-  "short_name": "Aasha",
-  "start_url": "/",
-  "display": "standalone",
-  "background_color": "#fafaf9",
-  "theme_color": "#17766f",
-  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
-}

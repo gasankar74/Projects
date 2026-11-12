@@ -1,0 +1,48 @@
+name: Meridian Planner CI
+on:
+  push:
+    branches: [main]
+    paths: ["meridian-planner/**", ".github/workflows/meridian-planner.yml"]
+  pull_request:
+    paths: ["meridian-planner/**", ".github/workflows/meridian-planner.yml"]
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: meridian
+          POSTGRES_PASSWORD: meridian
+          POSTGRES_DB: meridian_test
+        ports: ["5432:5432"]
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: meridian-planner/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q
+      - name: Migrations apply cleanly
+        env:
+          MERIDIAN_DATABASE_URL: postgresql+psycopg://meridian:meridian@localhost:5432/meridian_test
+        run: alembic upgrade head --sql > /dev/null
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: meridian-planner/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: meridian-planner/web/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
