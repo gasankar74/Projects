@@ -1,0 +1,10 @@
+fastapi==0.162.5
+uvicorn[standard]>=0.30
+sqlalchemy==2.1.8
+psycopg[binary]==3.3.8
+alembic==1.20.1
+pydantic[email]==2.14.3
+pydantic-settings==2.16.2
+cryptography==50.0.2
+httpx==0.28.1
+python-dateutil>=2.9
