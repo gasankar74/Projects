@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Encrypted backup of the Meridian database. Run nightly (see meridian-backup.timer).
+# Encrypted backup of the Elevate database. Run nightly (see meridian-backup.timer).
 #
 #   deploy/backup.sh            writes $MERIDIAN_BACKUP_DIR/meridian-<UTC time>.dump.gpg (+ .sha256)
 #

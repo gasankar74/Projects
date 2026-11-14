@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Meridian Planner",
+  title: "Elevate",
   description: "Tasks, deadlines and calendars in one plan",
   manifest: "/manifest.webmanifest",
 };

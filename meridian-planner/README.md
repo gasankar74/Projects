@@ -1,8 +1,10 @@
-# Meridian Planner
+# Elevate
 
 An auto-scheduling task manager: you enter tasks, deadlines, priorities and durations; it plans your time around every Google Calendar you use and re-plans when anything changes. Original code and design; behaviour modelled on publicly described features of tools like Motion.
 
 The full plan (requirements, Motion comparison, architecture, schema, scheduling algorithm, Google Calendar plan, milestones, testing, deployment, costs) is in the project's planning doc.
+
+The app was called Meridian Planner until November 2026. The folder, the `MERIDIAN_` settings, the database names and the Docker services keep that name so existing installs carry on without changes.
 
 ## Status: Phase 5 (all phases built)
 
@@ -27,9 +29,9 @@ The full plan (requirements, Motion comparison, architecture, schema, scheduling
 | Projects | Areas, projects with start dates and deadlines, project pages with a Kanban board (drag to change status and order), a timeline (Gantt) with dependency arrows, milestones and deadlines, and a list. AI breakdown turns a goal into estimated tasks with dependencies, previewed before saving. Templates: save any project as one, three starters (talk, mediation, paper), deadlines counted from the project start. |
 | Focus and time | Today page with a daily Top 3 (suggested, or your pick) and the week ahead. Start/stop timer from any task, manual time entries, focus sessions (25/50/90 min). Stopping a timer reduces the remaining time, so the scheduler plans only what's left. |
 | Reports | Weekly dashboard, workload by day against working time (by category or project), time by category, project, day and task, CSV export, and estimate accuracy per category. "Plan with learned estimates" (off by default) scales new estimates by each category's median actual/estimate once it has 5 finished tasks (0.5×–2×). |
-| Import from Motion or a CSV | Upload a Motion CSV export (or any task CSV); columns are matched automatically and can be changed. A review screen shows every row with its parsed deadline, duration, priority and project, flags duplicates (already imported, same title and deadline as an existing task, repeated in the file), completed tasks and errors, and lets you untick rows. Importing the same file again adds nothing. Projects are created as needed. |
+| Import from Motion or a CSV | Paste a Motion API key (Motion: Settings > API) and Elevate reads your Motion tasks directly; the key is used for that one request and never saved. Or upload a Motion CSV export (or any task CSV); columns are matched automatically and can be changed. A review screen shows every row with its parsed deadline, duration, priority and project, flags duplicates (already imported, same title and deadline as an existing task, repeated in the file), completed tasks and errors, and lets you untick rows. Importing the same file again adds nothing. Projects are created as needed. |
 | Notifications | Bell in the app, browser push (Web Push, works on a phone through your Tailscale address) and optional email through Gmail. Alerts for a missed hard deadline, a deadline at risk, an overloaded day, calendar sync failing for 30 minutes or needing reconnection, and optionally 5 minutes before a block starts. Quiet hours, an hourly cap, email only for urgent alerts (throttled), and an optional daily digest. Confidential tasks are never named outside the app. |
-| Security | Rate limits, cross-site request checks, a 6 MB request cap, security headers (CSP, no framing), non-root containers, and a production mode that refuses unsafe settings. Activity page with every sign-in, settings change and task change, signed-in sessions you can end. Deleting your account also removes Meridian's blocks from Google Calendar and revokes its Google access. See [docs/security-review.md](docs/security-review.md). |
+| Security | Rate limits, cross-site request checks, a 6 MB request cap, security headers (CSP, no framing), non-root containers, and a production mode that refuses unsafe settings. Activity page with every sign-in, settings change and task change, signed-in sessions you can end. Deleting your account also removes Elevate's blocks from Google Calendar and revokes its Google access. See [docs/security-review.md](docs/security-review.md). |
 | Running it | `docker-compose.prod.yml` for your own server, encrypted nightly backups, restore and a monthly restore drill. Runbook: [docs/deployment.md](docs/deployment.md). |
 | Data ownership | JSON and CSV export, JSON import with duplicate detection, account deletion. OAuth tokens encrypted at rest (Fernet, rotatable keys). No secrets in the browser bundle. |
 

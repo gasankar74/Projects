@@ -1,4 +1,4 @@
-// Meridian Planner service worker: shows browser push notifications and opens the app when one is clicked.
+// Elevate service worker: shows browser push notifications and opens the app when one is clicked.
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 
@@ -7,10 +7,10 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch (e) {
-    data = { title: event.data ? event.data.text() : "Meridian Planner" };
+    data = { title: event.data ? event.data.text() : "Elevate" };
   }
   event.waitUntil(
-    self.registration.showNotification(data.title || "Meridian Planner", {
+    self.registration.showNotification(data.title || "Elevate", {
       body: data.body || "",
       tag: data.tag || undefined,
       icon: "/icon.svg",

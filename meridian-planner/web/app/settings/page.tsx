@@ -107,7 +107,7 @@ function Calendars() {
                   <th className="text-center font-medium" title="Scheduled task blocks are written here">
                     Task calendar
                   </th>
-                  <th className="text-center font-medium" title="Google tells Meridian about changes right away (otherwise checked every 10 minutes)">
+                  <th className="text-center font-medium" title="Google tells Elevate about changes right away (otherwise checked every 10 minutes)">
                     Live
                   </th>
                 </tr>
@@ -190,7 +190,7 @@ function TaskCalendarStatus({ cals, onOff }: { cals: Calendar[]; onOff: (c: Cale
           </span>
           {data?.last_error && <div className="w-full text-xs text-red-600">{data.last_error}</div>}
           <p className="w-full text-xs text-stone-500">
-            Confidential tasks appear as “Focus block”, marked private. If you drag one of these events in Google Calendar, Meridian locks the task at the new time.
+            Confidential tasks appear as “Focus block”, marked private. If you drag one of these events in Google Calendar, Elevate locks the task at the new time.
           </p>
         </div>
       ) : (
@@ -390,7 +390,7 @@ function Data() {
           className="text-sm text-red-600 hover:underline"
           onClick={async () => {
             const typed = prompt(
-              `This permanently deletes your account, tasks and calendar connections. Task blocks Meridian added to your Google Calendar are removed and its Google access is revoked. Your own calendar events are not touched.\n\nType your email (${me?.email}) to confirm.`,
+              `This permanently deletes your account, tasks and calendar connections. Task blocks Elevate added to your Google Calendar are removed and its Google access is revoked. Your own calendar events are not touched.\n\nType your email (${me?.email}) to confirm.`,
             );
             if (!typed) return;
             try {

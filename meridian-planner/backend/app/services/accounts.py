@@ -41,8 +41,8 @@ def get_or_create_user(db: Session, email: str, name: str = "", google_sub: str 
 
 
 def remove_google_footprint(db: Session, user: User, client, max_deletes: int = 500) -> dict:
-    """Before an account is deleted: remove the task blocks Meridian wrote to Google Calendar and revoke
-    Meridian's access to every connected Google account. Best effort; failures never block the deletion."""
+    """Before an account is deleted: remove the task blocks Elevate wrote to Google Calendar and revoke
+    Elevate's access to every connected Google account. Best effort; failures never block the deletion."""
     import logging
 
     from ..models import BlockEventLink, Calendar, GoogleAccount

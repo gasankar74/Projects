@@ -126,7 +126,7 @@ def plan_writes(db: Session, user: User, now: datetime | None = None) -> dict:
 def _body(link: BlockEventLink, tz: str, with_id: bool) -> dict:
     body = {
         "summary": link.desired_title,
-        "description": "Planned by Meridian Planner." + ("" if link.desired_private else " Move this event to lock the task at the new time."),
+        "description": "Planned by Elevate." + ("" if link.desired_private else " Move this event to lock the task at the new time."),
         "start": {"dateTime": link.desired_start.isoformat(), "timeZone": tz},
         "end": {"dateTime": link.desired_end.isoformat(), "timeZone": tz},
         "transparency": "opaque",

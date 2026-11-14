@@ -19,7 +19,7 @@ function Login() {
       <div className="w-full max-w-sm rounded-2xl border border-stone-200 bg-white p-8 shadow-sm dark:border-stone-800 dark:bg-stone-900">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/icon.svg" alt="" className="mb-4 h-10 w-10" />
-        <h1 className="text-xl font-semibold">Meridian Planner</h1>
+        <h1 className="text-xl font-semibold">Elevate</h1>
         <p className="mt-1 text-sm text-stone-500">Your tasks, deadlines and calendars, planned for you.</p>
         {cfg?.google && (
           <a href={`/api/auth/google/login?mode=signin&tz=${encodeURIComponent(tz)}`} className="btn-primary mt-6 w-full justify-center py-2">

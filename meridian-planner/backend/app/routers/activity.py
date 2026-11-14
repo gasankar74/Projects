@@ -26,7 +26,7 @@ ACCOUNT_LABELS = {
     "calendar_sync": "Synced calendars",
     "export_json": "Exported data (JSON)",
     "export_csv": "Exported tasks (CSV)",
-    "import_json": "Imported a Meridian export",
+    "import_json": "Imported an Elevate export",
     "import_csv": "Imported tasks from CSV",
     "notification_settings": "Changed notification settings",
     "push_subscribed": "Turned on browser notifications",
@@ -41,7 +41,7 @@ TASK_LABELS = {
     "deleted": "Deleted",
     "restored": "Restored",
 }
-ACTORS = {"user": "You", "ai": "Assistant", "system": "Meridian", "scheduler": "Scheduler"}
+ACTORS = {"user": "You", "ai": "Assistant", "system": "Elevate", "scheduler": "Scheduler"}
 
 
 def _summarise_diff(diff: dict) -> str:

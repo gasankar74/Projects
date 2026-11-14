@@ -145,7 +145,7 @@ def scan(db: Session, user: User, now: datetime) -> int:
     for acct in db.scalars(select(GoogleAccount).where(GoogleAccount.user_id == user.id, GoogleAccount.status.in_(("error", "needs_reconnect")))):
         since = acct.last_synced_at
         if acct.status == "needs_reconnect":
-            made += create(db, user, "sync_failed", f"Reconnect {acct.email}", "Google stopped accepting Meridian's access to this account, "
+            made += create(db, user, "sync_failed", f"Reconnect {acct.email}", "Google stopped accepting Elevate's access to this account, "
                            "so its calendars aren't updating. Open Calendars & settings and press Reconnect.",
                            link="/settings", dedupe_key=f"sync_failed:{acct.id}:reconnect:{since.isoformat() if since else 'never'}")
         elif since is None or now - since >= SYNC_GRACE:
@@ -218,7 +218,7 @@ def deliver(db: Session, user: User, now: datetime) -> int:
                 ch["email"] = "throttled"
             else:
                 link = (get_settings().frontend_url.rstrip("/") + (n.link or "/"))
-                ok = mailer.send(_email_to(user), f"Meridian: {title}", f"{title}\n\n{body}\n\nOpen Meridian: {link}\n")
+                ok = mailer.send(_email_to(user), f"Elevate: {title}", f"{title}\n\n{body}\n\nOpen Elevate: {link}\n")
                 ch["email"] = "sent" if ok else "failed"
         n.channels = ch
         n.delivered_at = now
@@ -290,7 +290,7 @@ def build_digest(db: Session, user: User, now: datetime) -> dict:
     if unread:
         lines += ["", f"Unread notifications: {unread}"]
     link = get_settings().frontend_url.rstrip("/") + "/today"
-    lines += ["", f"Open today's plan: {link}", "", "You get this email because the daily digest is on in Meridian's settings."]
+    lines += ["", f"Open today's plan: {link}", "", "You get this email because the daily digest is on in Elevate's settings."]
     text = "\n".join(lines)
     body_html = "<pre style=\"font: 14px/1.5 system-ui, sans-serif; white-space: pre-wrap\">" + html.escape(text) + "</pre>"
     return {

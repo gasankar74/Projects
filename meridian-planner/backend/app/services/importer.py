@@ -6,7 +6,7 @@ mapping and picks rows -> apply() creates the tasks through the normal task serv
 Duplicates are caught three ways:
 - already imported: every imported task keeps an external_ref ("motion:<id>" when the file has an ID column,
   otherwise a hash of title, deadline and project), so importing the same file again creates nothing;
-- already in Meridian: an open task with the same title and the same deadline day;
+- already in Elevate: an open task with the same title and the same deadline day;
 - repeated in the file: the same title, deadline and project twice.
 """
 

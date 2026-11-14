@@ -1,8 +1,8 @@
-# Nightly encrypted database backup for Meridian Planner.
+# Nightly encrypted database backup for Elevate.
 # Install: sudo cp deploy/meridian-backup.{service,timer} /etc/systemd/system/
 #          (edit User= and WorkingDirectory= below), then: sudo systemctl enable --now meridian-backup.timer
 [Unit]
-Description=Meridian Planner database backup
+Description=Elevate database backup
 Wants=docker.service
 After=docker.service
 
