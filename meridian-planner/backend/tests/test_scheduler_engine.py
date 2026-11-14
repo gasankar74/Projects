@@ -531,3 +531,25 @@ def test_optimiser_is_deterministic():
     a = plan(snap(tasks))
     b = plan(snap(tasks))
     assert [(x.task_id, x.start) for x in a.blocks] == [(x.task_id, x.start) for x in b.blocks]
+
+
+def test_weekend_deadline_explains_free_time_outside_working_hours():
+    # Saturday 11:36 AM, a 30-minute task due tonight, 3 free hours on the calendar this afternoon.
+    sat = datetime(2026, 11, 21, 11, 36, tzinfo=NY)
+    t = TaskInput("a", "Call the client back", 30, deadline=datetime(2026, 11, 21, 21, 0, tzinfo=NY))
+    busy = [(datetime(2026, 11, 21, 12, 0, tzinfo=NY), datetime(2026, 11, 21, 13, 0, tzinfo=NY))]
+    p = plan(snap([t], busy=busy, now=sat))
+    w = next(w for w in p.warnings if w.kind == "cannot_meet_deadline")
+    assert "outside the hours this task may use" in w.message and w.data["free_outside_hours_min"] >= 180
+    # With Saturday in the working hours, it fits.
+    hours = {d: [["09:00", "17:00"]] for d in ("mon", "tue", "wed", "thu", "fri", "sat")} | {"sun": []}
+    p2 = plan(snap([t], busy=busy, now=sat, work_hours=hours))
+    assert "cannot_meet_deadline" not in kinds(p2) and blocks_of(p2, "a")
+
+
+def test_missed_deadline_with_full_calendar_does_not_blame_working_hours():
+    t = TaskInput("a", "Appeal brief", 600, deadline=at(0, 17))
+    busy = [(at(0, 6), at(0, 23))]
+    p = plan(snap([t], busy=busy, now=at(0, 7)))
+    w = next(w for w in p.warnings if w.kind == "cannot_meet_deadline")
+    assert "outside the hours" not in w.message

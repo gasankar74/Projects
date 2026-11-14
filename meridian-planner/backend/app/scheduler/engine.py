@@ -779,15 +779,33 @@ class _Planner:
         if got < need:
             res.unscheduled_min = need - got
             if hard_until:
+                outside = self._free_outside_hours(t, hard_until)
+                why = ""
+                if outside >= need - got:
+                    why = (f" Your calendar has {_hm(outside)} free before then, but outside the hours this task may use."
+                           f" Give the task a scheduling profile that covers that time, or add those hours to your"
+                           f" working hours in Settings.")
                 self.warnings.append(Warning_(
                     "cannot_meet_deadline", t.id,
-                    f"\"{t.title}\" can't be finished by its deadline ({self.fmt(hard_until)}). {_hm(need - got)} of {_hm(need)} has no room before then. It was not scheduled after the deadline.",
-                    {"deadline": hard_until.isoformat(), "shortfall_min": need - got},
+                    f"\"{t.title}\" can't be finished by its deadline ({self.fmt(hard_until)}). {_hm(need - got)} of {_hm(need)} has no room before then within working hours.{why} It was not scheduled after the deadline.",
+                    {"deadline": hard_until.isoformat(), "shortfall_min": need - got, "free_outside_hours_min": outside},
                 ))
             elif not t.can_split and need > self._longest_gap(t):
                 self.warnings.append(Warning_("no_slot_long_enough", t.id, f"\"{t.title}\" needs {_hm(need)} in one sitting and no free gap is that long. Allow splitting or shorten it.", {}))
             else:
                 self.warnings.append(Warning_("unscheduled", t.id, f"\"{t.title}\" doesn't fit in the next {self.st.horizon_days} days ({_hm(need - got)} left over).", {}))
+
+    def _free_outside_hours(self, t: TaskInput, until: datetime) -> int:
+        """Minutes free on the calendar before `until` that the task's hours rule out (explains a missed deadline)."""
+        if until <= self.start:
+            return 0
+        open_cal = _subtract_many([(self.start, min(until, self.end))], self.busy + [(b.start, b.end) for b in self.blocks])
+        allowed = self.task_hours(t)
+        total = 0
+        for s, e in open_cal:
+            inside = sum(max(0, (min(e, ae) - max(s, a_s)).total_seconds()) for a_s, ae in allowed) / 60
+            total += (e - s).total_seconds() / 60 - inside
+        return int(total // self.grid * self.grid)
 
     def _short(self, blocks: list[Block], need: int) -> bool:
         return sum(b.minutes for b in blocks) < int(math.ceil(need / self.grid) * self.grid)
