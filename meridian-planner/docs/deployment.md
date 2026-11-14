@@ -28,7 +28,7 @@ If you already run Nginx Proxy Manager (NPM) with a domain, use it instead of `t
 
 1. Put `MERIDIAN_WEB_BIND=<server LAN address>` (and `MERIDIAN_WEB_PORT=3001` if 3000 is taken) in the top-level `.env`, so the proxy can reach the web app.
 2. DNS: an `A` record for the name (e.g. `planner.example.net`) pointing at your public IP, with port 443 forwarded to NPM. For a private-only address, point it at a LAN or Tailscale address and use a DNS challenge instead.
-3. NPM, **Proxy Hosts > Add Proxy Host**: the domain name; scheme `http`; forward host = the LAN address; port = the web port; tick **Block Common Exploits**. **SSL** tab: request a new Let's Encrypt certificate, tick **Force SSL**, **HTTP/2** and **HSTS**. **Advanced** tab: `client_max_body_size 6m;` (CSV imports).
+3. NPM, **Proxy Hosts > Add Proxy Host**: the domain name; scheme `http`; forward host = the LAN address; port = the web port; tick **Block Common Exploits**. **SSL** tab: request a new Let's Encrypt certificate, tick **Force SSL**, **HTTP/2** and **HSTS**. Leave the **Advanced** tab empty (NPM already allows large uploads).
 4. APP_URL is then `https://planner.example.net`. Only the web app goes through the proxy; the API and database stay unreachable from the network.
 
 A public address means the sign-in page is on the internet: `MERIDIAN_ALLOWED_EMAILS` (below, required in production) decides who can get in, and sign-in attempts are rate limited. Google's instant calendar updates can then use `MERIDIAN_PUBLIC_URL=https://planner.example.net/api`.
