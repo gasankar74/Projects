@@ -40,7 +40,7 @@ RULES = [
     # AI calls are the most expensive thing the server does.
     Rule("ai_min", re.compile(r"^/assistant/conversations/[^/]+/messages$|^/projects/[^/]+/breakdown$"), frozenset({"POST"}), 15, 60, "user"),
     Rule("ai_hour", re.compile(r"^/assistant/conversations/[^/]+/messages$|^/projects/[^/]+/breakdown$"), frozenset({"POST"}), 200, 3600, "user"),
-    Rule("import", re.compile(r"^/imports$|^/import/json$"), frozenset({"POST"}), 10, 60, "user"),
+    Rule("import", re.compile(r"^/imports(/motion)?$|^/import/json$"), frozenset({"POST"}), 10, 60, "user"),
     Rule("export", re.compile(r"^/export/"), None, 20, 60, "user"),
     Rule("email", re.compile(r"^/notifications/(test|digest/send)$"), frozenset({"POST"}), 5, 300, "user"),
     Rule("account_delete", re.compile(r"^/account/delete$"), frozenset({"POST"}), 5, 3600, "user"),

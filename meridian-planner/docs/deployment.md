@@ -1,6 +1,6 @@
-# Deploying Meridian Planner on your own server
+# Deploying Elevate on your own server
 
-This runbook sets Meridian up on a home server (written for Cerybros: Ubuntu, Docker, Ollama already running) and covers updates, backups, restores and recovery. Everything runs in Docker Compose; Tailscale gives you an HTTPS address that only your own devices can reach. Running costs: $0.
+This runbook sets Elevate up on a home server (written for Cerybros: Ubuntu, Docker, Ollama already running) and covers updates, backups, restores and recovery. Everything runs in Docker Compose; Tailscale gives you an HTTPS address that only your own devices can reach. Running costs: $0.
 
 ## 1. First install
 
@@ -20,7 +20,7 @@ sudo tailscale serve --bg 3000          # https://<machine>.<tailnet>.ts.net -> 
 tailscale serve status                   # shows the address; use it below as APP_URL
 ```
 
-Only devices signed in to your tailnet can open it. Install Tailscale on your phone and laptop to use Meridian away from home.
+Only devices signed in to your tailnet can open it. Install Tailscale on your phone and laptop to use Elevate away from home.
 
 ### Or: your own domain through Nginx Proxy Manager
 
@@ -69,7 +69,7 @@ MERIDIAN_SMTP_PASSWORD=<16-character app password>
 MERIDIAN_EMAIL_FROM=you@gmail.com
 ```
 
-**Instant calendar updates (optional).** Google can tell Meridian about calendar changes within seconds, but it needs a public HTTPS address for `/webhooks/google`. Tailscale Funnel can publish just that path on another port (check `tailscale funnel --help` for your version):
+**Instant calendar updates (optional).** Google can tell Elevate about calendar changes within seconds, but it needs a public HTTPS address for `/webhooks/google`. Tailscale Funnel can publish just that path on another port (check `tailscale funnel --help` for your version):
 
 ```bash
 sudo tailscale funnel --bg --https=8443 --set-path=/webhooks/google http://127.0.0.1:8000/webhooks/google
@@ -94,8 +94,8 @@ Tip: `alias mp='docker compose -f /opt/meridian-planner/docker-compose.yml -f /o
 Each person gets their own separate account: their own tasks, calendars, plan, assistant and settings; nobody sees anyone else's data. There is no shared workspace.
 
 - **Add someone:** add their Google address to `MERIDIAN_ALLOWED_EMAILS` in `backend/.env`, run `mp up -d`, and send them the address. They sign in with Google, then connect their calendars.
-- **One person, several Google accounts** (personal and work): list only the main address. After signing in, connect the others in **Calendars & settings > Connect Google account**; those accounts can then also be used to sign in, into the same Meridian account.
-- **Remove someone:** take their address off the list and `mp up -d`: they can't sign in again and their open sessions stop working; they (or you, signed in as them) can delete the account from Settings, which also removes Meridian's blocks from their Google Calendar.
+- **One person, several Google accounts** (personal and work): list only the main address. After signing in, connect the others in **Calendars & settings > Connect Google account**; those accounts can then also be used to sign in, into the same Elevate account.
+- **Remove someone:** take their address off the list and `mp up -d`: they can't sign in again and their open sessions stop working; they (or you, signed in as them) can delete the account from Settings, which also removes Elevate's blocks from their Google Calendar.
 - **Google's side:** a personal OAuth app that hasn't been verified by Google shows an "unverified app" warning (click Advanced > continue) and is limited to 100 users, which is plenty.
 
 ## 2. Updating

@@ -1,5 +1,5 @@
 [Unit]
-Description=Run the Meridian Planner backup every night
+Description=Run the Elevate backup every night
 
 [Timer]
 OnCalendar=*-*-* 02:30:00

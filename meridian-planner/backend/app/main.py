@@ -29,11 +29,11 @@ async def lifespan(app: FastAPI):
         for p in problems:
             log.error("unsafe production setting: %s", p)
         raise RuntimeError("Refusing to start in production with unsafe settings: " + "; ".join(problems))
-    log.info("Meridian Planner API %s starting (%s)", VERSION, get_settings().env)
+    log.info("Elevate API %s starting (%s)", VERSION, get_settings().env)
     yield
 
 
-app = FastAPI(title="Meridian Planner API", version=VERSION, lifespan=lifespan)
+app = FastAPI(title="Elevate API", version=VERSION, lifespan=lifespan)
 
 # The web app proxies /api to this service, so cookies are first-party; CORS is only for local tools.
 app.add_middleware(

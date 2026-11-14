@@ -82,7 +82,7 @@ def google_callback(
     else:
         if not sign_in_allowed(db, email, sub):
             log.warning("Refused Google sign-in for an address not on MERIDIAN_ALLOWED_EMAILS")
-            msg = quote("That Google account isn't allowed to sign in to this Meridian server.")
+            msg = quote("That Google account isn't allowed to sign in to this Elevate server.")
             resp = RedirectResponse(f"{s.frontend_url}/login?error={msg}")
             resp.delete_cookie(PKCE_COOKIE, path="/")
             return resp

@@ -63,7 +63,7 @@ export function NotificationSettings() {
           {!data.push.enabled ? (
             <p className="text-xs text-stone-500">Not set up on the server. Add MERIDIAN_VAPID_PUBLIC_KEY and MERIDIAN_VAPID_PRIVATE_KEY (generate them with python -m app.cli vapid).</p>
           ) : !pushSupported() ? (
-            <p className="text-xs text-stone-500">This browser can&apos;t receive push notifications from this address. Open Meridian over HTTPS (your Tailscale address) to turn them on.</p>
+            <p className="text-xs text-stone-500">This browser can&apos;t receive push notifications from this address. Open Elevate over HTTPS (your Tailscale address) to turn them on.</p>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
               {here ? (

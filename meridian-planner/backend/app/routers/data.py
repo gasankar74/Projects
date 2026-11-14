@@ -53,7 +53,7 @@ def export_json(user: User = Depends(current_user), db: Session = Depends(get_db
     return Response(
         json.dumps(body, indent=2),
         media_type="application/json",
-        headers={"Content-Disposition": 'attachment; filename="meridian-export.json"'},
+        headers={"Content-Disposition": 'attachment; filename="elevate-export.json"'},
     )
 
 
@@ -81,7 +81,7 @@ def export_csv(user: User = Depends(current_user), db: Session = Depends(get_db)
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="meridian-tasks.csv"'},
+        headers={"Content-Disposition": 'attachment; filename="elevate-tasks.csv"'},
     )
 
 
@@ -92,13 +92,13 @@ class ImportResult(BaseModel):
 
 @router.post("/import/json", response_model=ImportResult)
 async def import_json(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """Re-import an Meridian JSON export. Tasks whose id already exists (or same title + deadline) are skipped."""
+    """Re-import an Elevate JSON export. Tasks whose id already exists (or same title + deadline) are skipped."""
     try:
         body = json.loads(await request.body())
     except json.JSONDecodeError:
         raise HTTPException(422, "Not valid JSON")
     if body.get("format") != "meridian-export":
-        raise HTTPException(422, "Not an Meridian export file")
+        raise HTTPException(422, "Not an Elevate export file")
     cat_by_name = {c.name: c for c in db.scalars(select(Category).where(Category.user_id == user.id))}
     cat_map = {}
     for c in body.get("categories", []):
@@ -147,7 +147,7 @@ async def import_json(request: Request, user: User = Depends(current_user), db: 
 
 class DeleteAccount(BaseModel):
     confirm_email: str
-    # Remove the task blocks Meridian wrote to Google Calendar, and revoke its Google access.
+    # Remove the task blocks Elevate wrote to Google Calendar, and revoke its Google access.
     clean_google: bool = True
 
 

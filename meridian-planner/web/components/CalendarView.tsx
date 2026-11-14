@@ -62,7 +62,7 @@ function eventStyle(ev: CalEvent): React.CSSProperties {
 }
 
 function blockStyle(b: Block, selected: boolean): React.CSSProperties {
-  const c = b.color ?? "#17766f";
+  const c = b.color ?? "#4b2fc4";
   return {
     background: `${c}33`,
     border: `1px solid ${c}`,
@@ -287,7 +287,7 @@ export function CalendarView() {
                   ))}
                   {list.length > 3 && <div className="text-stone-400">+{list.length - 3} more</div>}
                   {dayBlocks.length > 0 && (
-                    <button className="block w-full truncate rounded px-1 py-0.5 text-left text-[11px] font-medium" style={{ background: "#17766f22", color: "#125e58" }} onClick={() => (setAnchor(d), setMode("day"))}>
+                    <button className="block w-full truncate rounded px-1 py-0.5 text-left text-[11px] font-medium" style={{ background: "#4b2fc422", color: "#3b23a3" }} onClick={() => (setAnchor(d), setMode("day"))}>
                       {dayBlocks.length} planned · {fmtDuration(dayBlocks.reduce((a, b) => a + (new Date(b.end).getTime() - new Date(b.start).getTime()) / 60000, 0))}
                     </button>
                   )}

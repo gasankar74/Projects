@@ -131,7 +131,7 @@ def test_account_deletion_removes_google_blocks_and_revokes_access(client, googl
     assert len(ours(google)) == 1
     r = client.post("/account/delete", json={"confirm_email": "greg.personal@example.com"})
     assert r.status_code == 204, r.text
-    assert ours(google) == []  # the block Meridian wrote is gone from Google Calendar
-    assert getattr(google, "revoked_tokens", [])  # Meridian's Google access was revoked
+    assert ours(google) == []  # the block Elevate wrote is gone from Google Calendar
+    assert getattr(google, "revoked_tokens", [])  # Elevate's Google access was revoked
     with session_factory()() as db:
         assert db.scalars(select(User)).all() == []

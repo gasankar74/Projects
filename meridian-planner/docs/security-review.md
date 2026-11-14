@@ -13,7 +13,7 @@ Date: 2026-11-12. Scope: the API (FastAPI), worker, web app (Next.js), Docker Co
 | 5 | Containers ran as root. | Container escape impact | API/worker run as uid 10001, the web app as `node`. |
 | 6 | The Compose file published Postgres (password `meridian`) and the API on every network interface. | Data exposure on the LAN | `docker-compose.prod.yml`: Postgres not published; API and web bound to `127.0.0.1`; database password required from `.env`. |
 | 7 | Development email sign-in could be left on in production. | Account takeover | In production the API refuses to start with dev login on, non-secure cookies, a non-HTTPS app address, or no encryption key. |
-| 8 | Deleting the account left Meridian's task blocks in Google Calendar and its Google access in place. | Data left behind | Deletion removes the blocks Meridian wrote (never your own events) and revokes the Google tokens, then deletes everything. |
+| 8 | Deleting the account left Elevate's task blocks in Google Calendar and its Google access in place. | Data left behind | Deletion removes the blocks Elevate wrote (never your own events) and revokes the Google tokens, then deletes everything. |
 | 9 | No way to see or end other sessions; expired sessions were never deleted. | Lost device | Activity page lists sessions; sign out one or all others; expired sessions are purged hourly. |
 | 10 | Request bodies were unbounded. | Memory exhaustion | 6 MB cap (413); CSV imports limited to 5 MB and 5,000 rows. |
 | 11 | The HTTP client logged every Google request URL at INFO (calendar ids, sync tokens). | Data in logs | Lowered to WARNING. Logs can be JSON (`MERIDIAN_LOG_FORMAT=json`), rotated by Docker. |

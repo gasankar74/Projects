@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import ImportJob, User
 from ..security import current_user
-from ..services import importer
+from ..services import importer, motion_api
 
 router = APIRouter(prefix="/imports", tags=["imports"])
 
@@ -20,6 +20,17 @@ class ImportIn(BaseModel):
     filename: str = Field(default="", max_length=300)
     text: str = Field(max_length=importer.MAX_BYTES)
     source: Literal["motion_csv", "csv"] = "motion_csv"
+
+
+class MotionFetchIn(BaseModel):
+    # Used for this request only; never saved or logged.
+    api_key: str = Field(min_length=1, max_length=500)
+    include_completed: bool = False
+
+
+def motion_transport():
+    """Dependency; tests override it with an httpx.MockTransport."""
+    return None
 
 
 class ImportOptions(BaseModel):
@@ -60,6 +71,20 @@ def upload(body: ImportIn, user: User = Depends(current_user), db: Session = Dep
         job = importer.create_job(db, user, body.text, body.filename, body.source)
     except ValueError as e:
         raise HTTPException(422, str(e))
+    return importer.view(db, user, job)
+
+
+@router.post("/motion", status_code=201)
+def fetch_from_motion(body: MotionFetchIn, transport=Depends(motion_transport), user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Read the user's tasks from Motion's API with their API key and open them in the import review."""
+    try:
+        text, count = motion_api.fetch_csv(body.api_key, body.include_completed, transport=transport)
+        job = importer.create_job(db, user, text, f"Motion ({count} tasks)", "motion_csv")
+    except (motion_api.MotionError, ValueError) as e:
+        raise HTTPException(422, str(e))
+    if body.include_completed:
+        job.options = {**job.options, "include_completed": True}
+        db.commit()
     return importer.view(db, user, job)
 
 

@@ -208,7 +208,7 @@ TOOLS: list[dict] = [
 def system_prompt(user: User, now: datetime) -> str:
     tz = ZoneInfo(user.timezone)
     local = now.astimezone(tz)
-    return f"""You are the planning assistant in Meridian Planner, a task manager that schedules work into the user's calendar.
+    return f"""You are the planning assistant in Elevate, a task manager that schedules work into the user's calendar.
 Now: {local.strftime('%A %Y-%m-%d %H:%M')} ({user.timezone}).
 
 How to work:
