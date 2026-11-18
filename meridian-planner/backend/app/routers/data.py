@@ -92,13 +92,13 @@ class ImportResult(BaseModel):
 
 @router.post("/import/json", response_model=ImportResult)
 async def import_json(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """Re-import an Elevate JSON export. Tasks whose id already exists (or same title + deadline) are skipped."""
+    """Re-import an Elevate Orbit JSON export. Tasks whose id already exists (or same title + deadline) are skipped."""
     try:
         body = json.loads(await request.body())
     except json.JSONDecodeError:
         raise HTTPException(422, "Not valid JSON")
     if body.get("format") != "meridian-export":
-        raise HTTPException(422, "Not an Elevate export file")
+        raise HTTPException(422, "Not an Elevate Orbit export file")
     cat_by_name = {c.name: c for c in db.scalars(select(Category).where(Category.user_id == user.id))}
     cat_map = {}
     for c in body.get("categories", []):
@@ -147,7 +147,7 @@ async def import_json(request: Request, user: User = Depends(current_user), db: 
 
 class DeleteAccount(BaseModel):
     confirm_email: str
-    # Remove the task blocks Elevate wrote to Google Calendar, and revoke its Google access.
+    # Remove the task blocks Elevate Orbit wrote to Google Calendar, and revoke its Google access.
     clean_google: bool = True
 
 
