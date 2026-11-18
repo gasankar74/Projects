@@ -1,10 +1,11 @@
 {
-  "name": "Elevate",
-  "short_name": "Elevate",
+  "name": "Elevate Orbit",
+  "short_name": "Elevate Orbit",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#fafaf9",
-  "theme_color": "#4B2FC4",
+  "description": "Live life, make time for work",
+  "theme_color": "#1B2A4A",
   "icons": [
     { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml" },
     { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },

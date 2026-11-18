@@ -10,7 +10,7 @@ import type { ImportJob, ImportRow, ImportRowState } from "@/lib/types";
 
 const STATE: Record<ImportRowState, { label: string; tone: string }> = {
   new: { label: "New", tone: "bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200" },
-  duplicate: { label: "Already in Elevate", tone: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" },
+  duplicate: { label: "Already in Elevate Orbit", tone: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" },
   duplicate_in_file: { label: "Repeated in file", tone: "bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200" },
   already_imported: { label: "Imported before", tone: "bg-stone-100 text-stone-600 dark:bg-stone-800 dark:text-stone-300" },
   completed: { label: "Completed", tone: "bg-sky-50 text-sky-800 dark:bg-sky-950/40 dark:text-sky-200" },
@@ -55,7 +55,7 @@ function FromMotion({ onJob }: { onJob: (j: ImportJob) => void }) {
     <form onSubmit={fetchTasks} className="rounded-xl border border-stone-200 bg-white p-4 text-sm dark:border-stone-800 dark:bg-stone-900">
       <div className="font-semibold">Import from Motion with an API key</div>
       <p className="mt-1 text-stone-600 dark:text-stone-300">
-        In Motion, open Settings &gt; API, create a key and paste it here. Elevate reads your tasks once and shows them for review. The key is not saved; you can delete it in Motion afterwards.
+        In Motion, open Settings &gt; API, create a key and paste it here. Elevate Orbit reads your tasks once and shows them for review. The key is not saved; you can delete it in Motion afterwards.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <label htmlFor="motion-key" className="sr-only">Motion API key</label>
@@ -107,7 +107,7 @@ function Upload({ onJob }: { onJob: (j: ImportJob) => void }) {
       <div className="rounded-xl border border-stone-200 bg-white p-4 text-sm dark:border-stone-800 dark:bg-stone-900">
         <p>
           Or export your tasks from Motion as a CSV file, then drop it here. Any CSV with a title column works too. You&apos;ll see every row before anything is saved, and tasks that are already
-          in Elevate are skipped.
+          in Elevate Orbit are skipped.
         </p>
         <label
           className={`mt-4 flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-4 py-10 text-center ${drag ? "border-brand-500 bg-brand-50 dark:bg-brand-700/10" : "border-stone-300 dark:border-stone-700"}`}

@@ -1,4 +1,4 @@
-// Elevate service worker: shows browser push notifications and opens the app when one is clicked.
+// Elevate Orbit service worker: shows browser push notifications and opens the app when one is clicked.
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 
@@ -7,10 +7,10 @@ self.addEventListener("push", (event) => {
   try {
     data = event.data ? event.data.json() : {};
   } catch (e) {
-    data = { title: event.data ? event.data.text() : "Elevate" };
+    data = { title: event.data ? event.data.text() : "Elevate Orbit" };
   }
   event.waitUntil(
-    self.registration.showNotification(data.title || "Elevate", {
+    self.registration.showNotification(data.title || "Elevate Orbit", {
       body: data.body || "",
       tag: data.tag || undefined,
       icon: "/icon.svg",

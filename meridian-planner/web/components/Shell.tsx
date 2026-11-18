@@ -136,7 +136,10 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
       <Link href="/" className="flex items-center gap-2 px-2 pt-1">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src="/icon.svg" alt="" className="h-7 w-7" />
-        <span className="text-base font-semibold tracking-tight">Elevate</span>
+        <span className="flex min-w-0 flex-col leading-tight">
+          <span className="text-base font-semibold tracking-tight">Elevate Orbit</span>
+          <span className="truncate text-[11px] text-stone-500 dark:text-stone-400">Live life, make time for work</span>
+        </span>
       </Link>
       <button className="btn-primary justify-center" onClick={openQuickAdd} title="Quick add (Q)">
         + Add task <kbd className="ml-1 rounded bg-white/20 px-1 text-[10px]">Q</kbd>

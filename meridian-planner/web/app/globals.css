@@ -3,11 +3,11 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  --color-brand-50: #f2effd;
-  --color-brand-100: #e1dafb;
-  --color-brand-500: #5b3fd6;
-  --color-brand-600: #4b2fc4;
-  --color-brand-700: #3b23a3;
+  --color-brand-50: #fbf1f4;
+  --color-brand-100: #f3dce3;
+  --color-brand-500: #a32d52;
+  --color-brand-600: #8c2341;
+  --color-brand-700: #6e1a33;
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 

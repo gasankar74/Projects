@@ -38,7 +38,7 @@ function Focus() {
   useEffect(() => {
     if (entry) document.title = `${fmtClock(Math.max(0, sessionLeft))} · ${entry.title}`;
     return () => {
-      document.title = "Elevate";
+      document.title = "Elevate Orbit";
     };
   }, [entry, sessionLeft]);
 
